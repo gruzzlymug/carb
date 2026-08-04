@@ -18,7 +18,19 @@ const MAX_DELTA_SECONDS = 1 / 15;
  * once (see TrackView) and this loop just keeps the player and active
  * camera in sync with simulation state each frame.
  */
+/** Live read-only telemetry for the debug panel, refreshed every frame. */
+export interface Telemetry {
+  speedKmh: number;
+  gear: string;
+  rpm: number;
+  targetRpm: number;
+  accelMultiplier: number;
+}
+
 export class Game {
+  /** Kept up to date each frame; the debug panel binds directly to this via lil-gui's .listen(). */
+  readonly telemetry: Telemetry = { speedKmh: 0, gear: "1", rpm: 0, targetRpm: 0, accelMultiplier: 0 };
+
   private readonly input = new Input();
   private readonly renderer: Renderer;
   private readonly trackView: TrackView;
@@ -104,6 +116,13 @@ export class Game {
     this.cameraController.update(this.player.position);
     this.hud.update(this.player.speed, this.player.gearLabel, this.player.rpm);
     this.engineSound.update(this.player.rpm, this.input.isHeld("w"));
+
+    this.telemetry.speedKmh = Math.round(Math.abs(this.player.speed) * 3.6);
+    this.telemetry.gear = this.player.gearLabel;
+    this.telemetry.rpm = Math.round(this.player.rpm);
+    this.telemetry.targetRpm = Math.round(this.player.targetRpm);
+    this.telemetry.accelMultiplier = Math.round(this.player.accelMultiplier * 100) / 100;
+
     this.input.endFrame();
   }
 }
