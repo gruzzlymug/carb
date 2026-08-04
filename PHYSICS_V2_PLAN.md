@@ -89,6 +89,24 @@ Deferred (later passes, in order):
       of just decelerating. (Needs a rear-grip / rotation term.)
 - [ ] TIRE_GRIP tuning — only after the above and in-browser testing.
 
+## Pass FS — Fixed-step physics, decoupled from rendering  ✅ DONE
+Physics now runs at a fixed **120 Hz** via an accumulator, independent of the
+(variable) render rate; the render loop draws an interpolated pose between the
+last two physics states.
+- [x] `PHYSICS_HZ=120`, `PHYSICS_DT`, `MAX_FRAME_SECONDS=0.1` in constants.
+- [x] Game loop: accumulate real time, run N fixed `PHYSICS_DT` steps, then render.
+      (Correct pattern — more small steps, not one bigger step; not "5× speed".)
+- [x] Interpolation: `Player.syncVisuals(alpha)` blends prev↔current pose (position,
+      heading, wheel angle) for smooth rendering; camera follows `renderPosition`.
+- [x] Physics (`Player.update`) no longer touches Three.js transforms — visuals are
+      applied only at render time. Edge input (`endFrame`) consumed per physics step so
+      one keypress = one shift even when a frame runs several steps.
+- [x] Behavior preserved. Timestep convergence (traced turn radius): 60 Hz <0.5% error,
+      120 Hz ~0.1–0.2%, 240/300 Hz negligibly better → **120 Hz is sufficient**.
+- Deferred (larger refactor, not needed yet): fully split `Player` into `PlayerPhysics`
+  (no Three.js) + `PlayerPresentation` so the exact model can run headless for A/B tests.
+  Currently the dist-backed sims reimplement the step; that's been adequate.
+
 ## Pass 5 — Track generator  ← MAJOR SYSTEM (after Pass 4b)
 Findings from reading `src/world/{trackDefinitions,trackSpline,trackWorld}.ts`:
 - It is **not** a procedural generator — 3 fixed, hand-authored loops (rounded rectangle,

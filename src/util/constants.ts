@@ -1,5 +1,18 @@
 /** Centralized gameplay and rendering tuning values. */
 
+// Simulation timing. Physics runs at a fixed timestep, decoupled from the
+// (variable) render rate: each animation frame the loop accumulates real time
+// and runs as many fixed PHYSICS_DT steps as have elapsed, then renders an
+// interpolated pose (see engine/game.ts, Player.syncVisuals). Fixed dt keeps
+// the explicit integration (heading/position) consistent regardless of display
+// FPS and is the stable base for future friction-circle / handbrake dynamics.
+export const PHYSICS_HZ = 120; // physics updates per second
+export const PHYSICS_DT = 1 / PHYSICS_HZ; // seconds per physics step
+// A single render frame contributes at most this much real time to the physics
+// accumulator, so a stalled/backgrounded tab catches up in a bounded number of
+// steps (<= this / PHYSICS_DT) instead of spiraling.
+export const MAX_FRAME_SECONDS = 0.1;
+
 // Vehicle physics
 export const MAX_SPEED = 72; // meters/second; ~161 mph envelope — 5th redlines first (~67.8, ~152 mph), which is the real top speed
 export const MAX_REVERSE_SPEED = 12; // meters/second

@@ -7,9 +7,7 @@ import { CAMERA_TYPES, DEFAULT_CAMERA_TYPE, type CameraController } from "./came
 import { Player } from "../entities/player.js";
 import { buildTrackWorld, type TrackWorld } from "../world/trackWorld.js";
 import { DEFAULT_TRACK_TYPE } from "../world/trackDefinitions.js";
-
-/** Delta time is clamped so a stalled tab doesn't cause a huge physics jump on resume. */
-const MAX_DELTA_SECONDS = 1 / 15;
+import { PHYSICS_DT, MAX_FRAME_SECONDS } from "../util/constants.js";
 
 /**
  * Owns the top-level game loop: input -> physics -> rendering, driven
@@ -61,6 +59,7 @@ export class Game {
   private readonly engineSound = new EngineSound();
   private cameraController: CameraController;
   private lastTimestamp: number | null = null;
+  private accumulator = 0; // unspent real time carried between frames, fed to fixed-step physics
   private running = false;
   private canvasWidth = 0;
   private canvasHeight = 0;
@@ -118,24 +117,42 @@ export class Game {
   private readonly tick = (timestamp: number): void => {
     if (!this.running) return;
 
-    const dt =
+    const frameDt =
       this.lastTimestamp === null
         ? 0
-        : Math.min((timestamp - this.lastTimestamp) / 1000, MAX_DELTA_SECONDS);
+        : Math.min((timestamp - this.lastTimestamp) / 1000, MAX_FRAME_SECONDS);
     this.lastTimestamp = timestamp;
 
-    this.update(dt);
+    // Fixed-step physics: run as many PHYSICS_DT steps as real time has elapsed,
+    // decoupled from render cadence.
+    this.accumulator += frameDt;
+    while (this.accumulator >= PHYSICS_DT) {
+      this.stepPhysics(PHYSICS_DT);
+      this.accumulator -= PHYSICS_DT;
+    }
+
+    // Render the pose interpolated between the last two physics states, so
+    // motion is smooth even when the render rate differs from the physics rate.
+    const alpha = this.accumulator / PHYSICS_DT;
+    this.player.syncVisuals(alpha);
+    this.cameraController.update(this.player.renderPosition);
+    this.presentFrame();
     this.renderer.render(this.cameraController.camera);
 
     requestAnimationFrame(this.tick);
   };
 
-  private update(dt: number): void {
+  /** One fixed physics step. Edge-triggered input is consumed here (endFrame) so a press maps to exactly one step even when a render frame runs several. */
+  private stepPhysics(dt: number): void {
     if (this.input.wasPressed("r")) {
       this.player.respawn(this.spawn.position, this.spawn.headingRad);
     }
     this.player.update(dt, this.input);
-    this.cameraController.update(this.player.position);
+    this.input.endFrame();
+  }
+
+  /** Per-render-frame presentation: HUD, engine audio, and debug telemetry (read the latest physics state; no interpolation needed for readouts). */
+  private presentFrame(): void {
     this.hud.update(this.player.speed, this.player.gearLabel, this.player.rpm);
     this.engineSound.update(this.player.rpm, this.input.isHeld("w"));
 
@@ -152,7 +169,5 @@ export class Game {
     this.telemetry.turnRadius = Math.round(this.player.turnRadiusM);
     this.telemetry.cornerLimit = this.player.steeringLimit;
     this.telemetry.shiftCutMs = Math.round(this.player.shiftTorqueCutRemainingMs);
-
-    this.input.endFrame();
   }
 }

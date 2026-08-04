@@ -133,6 +133,14 @@ export class Player {
   private lastGripLimited = false; // yaw was capped by tire grip (genuine understeer)
   private lastSteeringLimited = false; // at full lock but NOT grip-limited (out of steering angle)
   private lastTurnRadius = Infinity; // |speed / yawRate|, meters (Infinity when going straight)
+  // Fixed-step render interpolation: the pose at the START of the current
+  // physics step, so a variable-rate render loop can blend toward the new pose
+  // (see syncVisuals) and stay smooth even when physics runs at a different Hz.
+  private readonly prevPosition: Vec3 = { x: 0, y: 0, z: 0 };
+  private prevHeading = 0;
+  private prevWheelSteer = 0;
+  /** Interpolated render-space position, updated by syncVisuals — the camera follows this (not the raw physics position) so it stays smooth. */
+  readonly renderPosition: Vec3 = { x: 0, y: 0, z: 0 };
 
   readonly object3D = new THREE.Group();
 
@@ -150,6 +158,13 @@ export class Player {
   }
 
   update(dt: number, input: Input): void {
+    // Snapshot the pose before this step mutates it, for render interpolation.
+    this.prevPosition.x = this.position.x;
+    this.prevPosition.y = this.position.y;
+    this.prevPosition.z = this.position.z;
+    this.prevHeading = this.heading;
+    this.prevWheelSteer = this.wheelSteer;
+
     const throttle = input.isHeld("w");
     const steerLeft = input.isHeld("a");
     const steerRight = input.isHeld("d");
@@ -236,7 +251,8 @@ export class Player {
     this.position.y += Math.cos(this.heading) * this.speed * dt;
 
     this.lastLongAccel = dt > 0 ? (this.speed - speedBefore) / dt : 0;
-    this.syncObject3D();
+    // Visuals are applied at render time (syncVisuals) from the interpolated
+    // pose, not here — physics only advances state.
   }
 
   /** R -> N -> 1 -> 2 -> 3 -> 4 -> 5, no clutch, one step per call. */
@@ -311,17 +327,16 @@ export class Player {
 
   /**
    * Eases the front-wheel deflection toward the steer input (like a steering
-   * rack, not an instant snap) and rotates the wheel meshes to match. This
-   * is both what you see AND the steering input to applySteering — so the
-   * wheels swing while parked, and the car turns in as they come over.
-   * `steerInput` is -1/0/+1.
+   * rack, not an instant snap). This deflection is the steering input to
+   * applySteering — the car turns in as the wheels come over — and it drives
+   * the visible wheel angle too (rendered by syncVisuals). `steerInput` is
+   * -1/0/+1.
    */
   private updateWheelSteer(dt: number, steerInput: number): void {
     // Negated to match the heading convention (D / steer-right decreases
     // heading), so the wheels visibly point the way the car turns.
     const target = -steerInput * WHEEL_MAX_STEER_RAD;
     this.wheelSteer += (target - this.wheelSteer) * Math.min(1, WHEEL_STEER_SMOOTH_PER_SEC * dt);
-    for (const wheel of this.frontWheels) wheel.rotation.y = this.wheelSteer;
   }
 
   /**
@@ -445,15 +460,36 @@ export class Player {
     this.shiftBlendRemaining = 0;
     this.shiftTorqueCutRemaining = 0;
     this.wheelSteer = 0;
-    for (const wheel of this.frontWheels) wheel.rotation.y = 0;
-    this.syncObject3D();
+    // Collapse interpolation history onto the new pose so we don't tween across
+    // the teleport, then place the visuals immediately.
+    this.prevPosition.x = this.position.x;
+    this.prevPosition.y = this.position.y;
+    this.prevPosition.z = this.position.z;
+    this.prevHeading = this.heading;
+    this.prevWheelSteer = this.wheelSteer;
+    this.syncVisuals(1);
   }
 
-  private syncObject3D(): void {
-    this.object3D.position.copy(toThreeVector3(this.position));
+  /**
+   * Applies the visual transform at interpolation factor `alpha` (0..1) between
+   * the previous and current physics poses, so a variable-rate render loop
+   * stays smooth over fixed-step physics. Also publishes renderPosition (our
+   * coordinate space) for the camera to follow. Heading/steer use plain lerp —
+   * consecutive physics poses differ by at most one small step, so there's no
+   * angle-wrap concern.
+   */
+  syncVisuals(alpha: number): void {
+    this.renderPosition.x = this.prevPosition.x + (this.position.x - this.prevPosition.x) * alpha;
+    this.renderPosition.y = this.prevPosition.y + (this.position.y - this.prevPosition.y) * alpha;
+    this.renderPosition.z = this.prevPosition.z + (this.position.z - this.prevPosition.z) * alpha;
+    const heading = this.prevHeading + (this.heading - this.prevHeading) * alpha;
+    const steer = this.prevWheelSteer + (this.wheelSteer - this.prevWheelSteer) * alpha;
+
+    this.object3D.position.copy(toThreeVector3(this.renderPosition));
     // Our world's Y (forward) maps to Three's Z, and our heading convention
-    // (0 = facing +Y, positive = turning toward +X) matches THREE's
-    // rotation.y directly once that axis remap is applied — no sign flip.
-    this.object3D.rotation.y = this.heading;
+    // (0 = facing +Y, positive = turning toward +X) matches THREE's rotation.y
+    // directly once that axis remap is applied — no sign flip.
+    this.object3D.rotation.y = heading;
+    for (const wheel of this.frontWheels) wheel.rotation.y = steer;
   }
 }
