@@ -1,0 +1,19 @@
+{
+  "name": "drive",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc --watch",
+    "serve": "python3 -m http.server 5500"
+  },
+  "devDependencies": {
+    "@types/three": "0.185.3",
+    "typescript": "^5.5.0"
+  },
+  "dependencies": {
+    "lil-gui": "0.21.0",
+    "three": "0.185.1"
+  }
+}

@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Drive</title>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      background: #000;
+      overflow: hidden;
+      height: 100%;
+    }
+    #app {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+    }
+    canvas {
+      background: #000;
+      display: block;
+    }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <canvas id="game-canvas"></canvas>
+  </div>
+  <!--
+    No bundler: "three" is resolved at runtime via this import map, pinned
+    to the same version installed in package.json (used only for local
+    TypeScript type-checking, not served ourselves).
+  -->
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://unpkg.com/three@0.185.1/build/three.module.js",
+        "lil-gui": "https://unpkg.com/lil-gui@0.21.0/dist/lil-gui.esm.js"
+      }
+    }
+  </script>
+  <script type="module" src="/dist/main.js"></script>
+</body>
+</html>
