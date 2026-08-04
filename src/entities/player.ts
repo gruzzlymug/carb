@@ -26,10 +26,15 @@ import {
   AUTOMATIC_SHIFT_COOLDOWN_MS,
   DOWNSHIFT_SETTLE_MS,
   SHIFT_RPM_BLEND_MS,
+  SHIFT_TORQUE_CUT_MS,
+  SHIFT_TORQUE_CUT_FACTOR,
   AUTOMATIC_UPSHIFT_RPM,
   AUTOMATIC_COAST_UPSHIFT_RPM,
   AUTOMATIC_DOWNSHIFT_RPM,
   AUTOMATIC_BRAKE_DOWNSHIFT_RPM,
+  AUTOMATIC_KICKDOWN_RPM,
+  AUTOMATIC_KICKDOWN_MIN_GAIN,
+  AUTOMATIC_MAX_DOWNSHIFT_RPM,
 } from "../util/constants.js";
 
 const CAR_BODY_MESH = createCar();
@@ -44,18 +49,40 @@ const MANUAL_SHIFT_COOLDOWN_SECONDS = MANUAL_SHIFT_COOLDOWN_MS / 1000;
 const AUTOMATIC_SHIFT_COOLDOWN_SECONDS = AUTOMATIC_SHIFT_COOLDOWN_MS / 1000;
 const DOWNSHIFT_SETTLE_SECONDS = DOWNSHIFT_SETTLE_MS / 1000;
 const SHIFT_RPM_BLEND_SECONDS = SHIFT_RPM_BLEND_MS / 1000;
+const SHIFT_TORQUE_CUT_SECONDS = SHIFT_TORQUE_CUT_MS / 1000;
 
 /**
- * Picks the automatic gear one step at a time (never Neutral/Reverse), and
- * is throttle/brake-aware so the box has some character rather than being a
- * plain RPM selector: flat out it holds gears longer, lifting off it
- * upshifts early, and braking it drops gears sooner. The single-step
- * behavior (plus the shift cooldown in update) is what keeps it predictable
- * — it walks through the gears instead of jumping several at once.
+ * Picks the automatic gear one step at a time (never Neutral/Reverse). Three
+ * behaviors, throttle/brake-aware so the box has character rather than being
+ * a plain RPM selector:
+ *
+ *   - RPM too high         -> upshift (later, flat out; earlier when coasting)
+ *   - RPM too low          -> downshift (sooner under braking)
+ *   - Throttle + weak pull -> kickdown one gear, if a lower gear makes
+ *                             meaningfully more torque and wouldn't overspeed
+ *                             the engine (AUTOMATIC_MAX_DOWNSHIFT_RPM)
+ *
+ * Kickdown is the piece a threshold selector misses — it's why flooring it in
+ * a tall gear at speed grabs a lower gear instead of lugging. The single-step
+ * behavior plus the shift cooldown keep it from jumping several gears at once,
+ * and the RPM ceiling keeps the automatic from ever doing the theatrical
+ * over-redline downshift that manual mode is allowed.
  */
 function automaticGearFor(currentGear: number, speed: number, throttle: boolean, brake: boolean): number {
   const gear = Math.max(1, Math.min(5, currentGear));
   const rpm = rpmForGear(gear, speed);
+
+  // Full-throttle kickdown: below the useful band, drop a gear if it pays off.
+  if (throttle && gear > 1 && rpm < AUTOMATIC_KICKDOWN_RPM) {
+    const lowerGear = gear - 1;
+    const lowerRpm = rpmForGear(lowerGear, speed);
+    if (lowerRpm <= AUTOMATIC_MAX_DOWNSHIFT_RPM) {
+      const currentTorque = accelerationMultiplierForGear(gear) * engineTorqueFraction(rpm);
+      const lowerTorque = accelerationMultiplierForGear(lowerGear) * engineTorqueFraction(lowerRpm);
+      if (lowerTorque > currentTorque * (1 + AUTOMATIC_KICKDOWN_MIN_GAIN)) return lowerGear;
+    }
+  }
+
   const upshiftRpm = throttle ? AUTOMATIC_UPSHIFT_RPM : AUTOMATIC_COAST_UPSHIFT_RPM;
   const downshiftRpm = brake ? AUTOMATIC_BRAKE_DOWNSHIFT_RPM : AUTOMATIC_DOWNSHIFT_RPM;
   if (gear < 5 && rpm >= upshiftRpm) return gear + 1;
@@ -96,8 +123,16 @@ export class Player {
   private shiftCooldown = 0; // seconds remaining before another gear change is allowed
   private downshiftSettleRemaining = 0; // seconds remaining in the post-downshift RPM overshoot window
   private shiftBlendRemaining = 0; // seconds remaining easing displayed RPM down after an upshift
+  private shiftTorqueCutRemaining = 0; // seconds remaining in the post-upshift torque interruption
   private readonly frontWheels: THREE.Mesh[] = []; // steerable front wheels (rear wheels stay fixed)
   private wheelSteer = 0; // current front-wheel yaw in radians, eased toward the steer target
+  // Per-frame telemetry snapshots (read via getters for the debug panel).
+  private lastLongAccel = 0; // longitudinal acceleration, m/s^2 (negative under braking)
+  private lastYawRate = 0; // rad/s
+  private lastLateralAccel = 0; // m/s^2
+  private lastGripLimited = false; // yaw was capped by tire grip (genuine understeer)
+  private lastSteeringLimited = false; // at full lock but NOT grip-limited (out of steering angle)
+  private lastTurnRadius = Infinity; // |speed / yawRate|, meters (Infinity when going straight)
 
   readonly object3D = new THREE.Group();
 
@@ -121,7 +156,9 @@ export class Player {
     const brake = input.isHeld("s");
     const handbrake = input.isHeld("space");
     const manual = transmissionSettings.mode === "manual";
+    const speedBefore = this.speed; // for longitudinal-accel telemetry
     this.shiftCooldown = Math.max(0, this.shiftCooldown - dt);
+    this.shiftTorqueCutRemaining = Math.max(0, this.shiftTorqueCutRemaining - dt);
 
     if (manual) {
       if (input.wasPressed("e")) this.shiftUp();
@@ -143,8 +180,15 @@ export class Player {
       const enginePower = engineTorqueFraction(rpmForGear(this.gear, this.speed));
       const speedRatio = Math.min(Math.abs(this.speed) / cap, 1);
       const dragFalloff = 1 - Math.pow(speedRatio, 3) * TOP_SPEED_FALLOFF;
+      // Brief torque interruption right after an upshift (see constants) — a
+      // physical "thump" between gears, not a lingering nerf.
+      const shiftTorqueFactor = this.shiftTorqueCutRemaining > 0 ? SHIFT_TORQUE_CUT_FACTOR : 1;
       const accel =
-        ACCELERATION * accelerationMultiplierForGear(this.gear) * enginePower * dragFalloff;
+        ACCELERATION *
+        accelerationMultiplierForGear(this.gear) *
+        enginePower *
+        dragFalloff *
+        shiftTorqueFactor;
       if (direction > 0) {
         this.speed = Math.min(this.speed + accel * dt, cap);
       } else {
@@ -172,7 +216,10 @@ export class Player {
       const target =
         this.speed < -0.3 ? -1 : automaticGearFor(this.gear > 0 ? this.gear : 1, this.speed, throttle, brake);
       if (target !== this.gear) {
-        if (target > this.gear) this.shiftBlendRemaining = SHIFT_RPM_BLEND_SECONDS; // ease the RPM drop on an upshift
+        if (target > this.gear) {
+          this.shiftBlendRemaining = SHIFT_RPM_BLEND_SECONDS; // ease the RPM drop on an upshift
+          this.shiftTorqueCutRemaining = SHIFT_TORQUE_CUT_SECONDS; // brief torque cut (upshift only)
+        }
         this.gear = target;
         this.shiftCooldown = AUTOMATIC_SHIFT_COOLDOWN_SECONDS;
       }
@@ -188,6 +235,7 @@ export class Player {
     this.position.x += Math.sin(this.heading) * this.speed * dt;
     this.position.y += Math.cos(this.heading) * this.speed * dt;
 
+    this.lastLongAccel = dt > 0 ? (this.speed - speedBefore) / dt : 0;
     this.syncObject3D();
   }
 
@@ -199,6 +247,7 @@ export class Player {
     this.gear = next;
     this.shiftCooldown = MANUAL_SHIFT_COOLDOWN_SECONDS;
     this.shiftBlendRemaining = SHIFT_RPM_BLEND_SECONDS; // ease the RPM drop instead of teleporting
+    this.shiftTorqueCutRemaining = SHIFT_TORQUE_CUT_SECONDS; // brief torque cut (upshift only)
   }
 
   /**
@@ -289,11 +338,30 @@ export class Player {
    * free: negative speed flips the yaw sign.
    */
   private applySteering(dt: number): void {
-    if (this.wheelSteer === 0 || this.speed === 0) return;
+    if (this.wheelSteer === 0 || this.speed === 0) {
+      this.lastYawRate = 0;
+      this.lastLateralAccel = 0;
+      this.lastGripLimited = false;
+      this.lastSteeringLimited = false;
+      this.lastTurnRadius = Infinity;
+      return;
+    }
+    // Two independent limits on how tight the car can turn: the steering
+    // geometry (desiredYaw at the current wheel angle) and the tire-grip cap
+    // (maxYaw). Whichever is smaller wins.
     const desiredYaw = (this.speed / VEHICLE_WHEELBASE) * Math.tan(this.wheelSteer);
     const maxYaw = TIRE_GRIP / Math.max(Math.abs(this.speed), 1);
     const yawRate = Math.max(-maxYaw, Math.min(maxYaw, desiredYaw));
     this.heading += yawRate * dt;
+    this.lastYawRate = yawRate;
+    this.lastLateralAccel = Math.abs(this.speed * yawRate);
+    this.lastGripLimited = Math.abs(desiredYaw) > maxYaw;
+    // At full lock and still not grip-limited => running out of steering angle,
+    // not grip (only happens at very low speed). Distinguishing the two makes
+    // it clear whether more grip would even help.
+    const atFullLock = Math.abs(this.wheelSteer) >= WHEEL_MAX_STEER_RAD - 1e-3;
+    this.lastSteeringLimited = atFullLock && !this.lastGripLimited;
+    this.lastTurnRadius = Math.abs(yawRate) > 1e-4 ? Math.abs(this.speed / yawRate) : Infinity;
   }
 
   /** "R", "N", or the forward gear number — for the HUD. */
@@ -313,6 +381,58 @@ export class Player {
     return this.gear === 0 ? 0 : accelerationMultiplierForGear(this.gear);
   }
 
+  /** Engine torque fraction (0..1) at the current drivetrain RPM — 0 in Neutral. Telemetry. */
+  get engineTorque(): number {
+    return this.gear === 0 ? 0 : engineTorqueFraction(rpmForGear(this.gear, this.speed));
+  }
+
+  /** Longitudinal acceleration measured last frame, m/s^2 (negative under braking). Telemetry. */
+  get longitudinalAccel(): number {
+    return this.lastLongAccel;
+  }
+
+  /** Front-wheel deflection, degrees. Telemetry. */
+  get wheelSteerDeg(): number {
+    return (this.wheelSteer * 180) / Math.PI;
+  }
+
+  /** Yaw rate last frame, degrees/second. Telemetry. */
+  get yawRateDeg(): number {
+    return (this.lastYawRate * 180) / Math.PI;
+  }
+
+  /** Lateral (cornering) acceleration last frame, m/s^2. Telemetry. */
+  get lateralAccel(): number {
+    return this.lastLateralAccel;
+  }
+
+  /** Whether steering was capped by tire grip (understeering) last frame. Telemetry. */
+  get isGripLimited(): boolean {
+    return this.lastGripLimited;
+  }
+
+  /** What (if anything) is limiting cornering right now — for tuning. Telemetry. */
+  get steeringLimit(): "grip" | "steering" | "none" {
+    if (this.lastGripLimited) return "grip";
+    if (this.lastSteeringLimited) return "steering";
+    return "none";
+  }
+
+  /** Current turn radius in meters (|speed / yawRate|); 0 reported when going straight. Telemetry. */
+  get turnRadiusM(): number {
+    return Number.isFinite(this.lastTurnRadius) ? this.lastTurnRadius : 0;
+  }
+
+  /** Whether the post-upshift torque cut is currently active. Telemetry. */
+  get shiftTorqueCutActive(): boolean {
+    return this.shiftTorqueCutRemaining > 0;
+  }
+
+  /** Milliseconds left in the post-upshift torque cut (0 when inactive). Telemetry. */
+  get shiftTorqueCutRemainingMs(): number {
+    return this.shiftTorqueCutRemaining * 1000;
+  }
+
   /** Teleports the car to a new position/heading (e.g. spawning onto a track) and resets speed/gear/RPM. */
   respawn(position: Vec3, headingRad: number): void {
     this.position = { ...position };
@@ -323,6 +443,7 @@ export class Player {
     this.limiterPhase = 0;
     this.downshiftSettleRemaining = 0;
     this.shiftBlendRemaining = 0;
+    this.shiftTorqueCutRemaining = 0;
     this.wheelSteer = 0;
     for (const wheel of this.frontWheels) wheel.rotation.y = 0;
     this.syncObject3D();

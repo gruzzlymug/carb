@@ -18,9 +18,17 @@ export function createDebugPanel(game: Game, controlsOverlay: ControlsOverlay): 
   const telemetryFolder = gui.addFolder("Telemetry");
   telemetryFolder.add(game.telemetry, "speedKmh").name("Speed (km/h)").listen().disable();
   telemetryFolder.add(game.telemetry, "gear").name("Gear").listen().disable();
-  telemetryFolder.add(game.telemetry, "rpm").name("RPM").listen().disable();
-  telemetryFolder.add(game.telemetry, "targetRpm").name("Target RPM (uncapped)").listen().disable();
-  telemetryFolder.add(game.telemetry, "accelMultiplier").name("Accel Multiplier").listen().disable();
+  telemetryFolder.add(game.telemetry, "rpm").name("RPM (display)").listen().disable();
+  telemetryFolder.add(game.telemetry, "targetRpm").name("Drivetrain RPM").listen().disable();
+  telemetryFolder.add(game.telemetry, "engineTorque").name("Engine Torque (0-1)").listen().disable();
+  telemetryFolder.add(game.telemetry, "gearMultiplier").name("Gear Multiplier").listen().disable();
+  telemetryFolder.add(game.telemetry, "longAccel").name("Accel (m/s²)").listen().disable();
+  telemetryFolder.add(game.telemetry, "wheelSteerDeg").name("Wheel Steer (°)").listen().disable();
+  telemetryFolder.add(game.telemetry, "yawRateDeg").name("Yaw Rate (°/s)").listen().disable();
+  telemetryFolder.add(game.telemetry, "lateralAccel").name("Lateral Accel (m/s²)").listen().disable();
+  telemetryFolder.add(game.telemetry, "turnRadius").name("Turn Radius (m)").listen().disable();
+  telemetryFolder.add(game.telemetry, "cornerLimit").name("Corner Limit").listen().disable();
+  telemetryFolder.add(game.telemetry, "shiftCutMs").name("Shift cut (ms)").listen().disable();
   telemetryFolder.open();
 
   const controlsFolder = gui.addFolder("Controls");
