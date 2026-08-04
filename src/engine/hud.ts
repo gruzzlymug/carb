@@ -1,4 +1,4 @@
-import { IDLE_RPM, REDLINE_RPM, LIMITER_RPM } from "../util/constants.js";
+import { IDLE_RPM, REDLINE_RPM, RECOMMENDED_SHIFT_RPM } from "../util/constants.js";
 
 const TACH_WIDTH_PX = 160;
 
@@ -62,6 +62,6 @@ export class Hud {
     const fraction = Math.max(0, Math.min(1, (rpm - IDLE_RPM) / (REDLINE_RPM - IDLE_RPM)));
     this.tachFill.style.width = `${fraction * 100}%`;
     this.tachFill.style.background = fraction < 0.6 ? "#4caf50" : fraction < 0.85 ? "#e0c030" : "#d83a3a";
-    this.tachValueEl.textContent = `${Math.round(rpm)} RPM${rpm >= LIMITER_RPM - 50 ? " — SHIFT!" : ""}`;
+    this.tachValueEl.textContent = `${Math.round(rpm)} RPM${rpm >= RECOMMENDED_SHIFT_RPM ? " — SHIFT!" : ""}`;
   }
 }

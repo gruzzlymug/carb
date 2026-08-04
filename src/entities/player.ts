@@ -5,7 +5,7 @@ import { createCar, createWheel, WHEEL_OFFSETS } from "../graphics/procedural.js
 import { createMeshObject } from "../graphics/toThreeGeometry.js";
 import { toThreeVector3 } from "../graphics/coordinates.js";
 import { transmissionSettings } from "../util/transmissionSettings.js";
-import { rpmForGear, accelerationMultiplierForGear } from "../util/engineModel.js";
+import { rpmForGear, accelerationMultiplierForGear, engineTorqueFraction } from "../util/engineModel.js";
 import {
   MAX_SPEED,
   MAX_REVERSE_SPEED,
@@ -13,13 +13,23 @@ import {
   BRAKE_FORCE,
   HANDBRAKE_FORCE,
   FRICTION,
-  STEERING_RATE,
-  MIN_STEER_SPEED_FACTOR,
+  VEHICLE_WHEELBASE,
+  TIRE_GRIP,
+  WHEEL_MAX_STEER_RAD,
+  WHEEL_STEER_SMOOTH_PER_SEC,
+  TOP_SPEED_FALLOFF,
   IDLE_RPM,
   REDLINE_RPM,
   LIMITER_RPM,
+  MAX_TRANSMISSION_RPM,
+  MANUAL_SHIFT_COOLDOWN_MS,
+  AUTOMATIC_SHIFT_COOLDOWN_MS,
+  DOWNSHIFT_SETTLE_MS,
+  SHIFT_RPM_BLEND_MS,
   AUTOMATIC_UPSHIFT_RPM,
+  AUTOMATIC_COAST_UPSHIFT_RPM,
   AUTOMATIC_DOWNSHIFT_RPM,
+  AUTOMATIC_BRAKE_DOWNSHIFT_RPM,
 } from "../util/constants.js";
 
 const CAR_BODY_MESH = createCar();
@@ -30,12 +40,26 @@ const NEUTRAL_REV_RATE_UP = 6000; // RPM/second, throttle held
 const NEUTRAL_REV_RATE_DOWN = 4000; // RPM/second, throttle released
 const NEUTRAL_REV_TARGET_FRACTION = 0.75; // of redline, when throttle held
 const LIMITER_BOUNCE_PERIOD = 0.07; // seconds per REDLINE/LIMITER toggle, while pinned
+const MANUAL_SHIFT_COOLDOWN_SECONDS = MANUAL_SHIFT_COOLDOWN_MS / 1000;
+const AUTOMATIC_SHIFT_COOLDOWN_SECONDS = AUTOMATIC_SHIFT_COOLDOWN_MS / 1000;
+const DOWNSHIFT_SETTLE_SECONDS = DOWNSHIFT_SETTLE_MS / 1000;
+const SHIFT_RPM_BLEND_SECONDS = SHIFT_RPM_BLEND_MS / 1000;
 
-/** Auto-selects a forward gear (1-5) by RPM thresholds — never chooses Neutral/Reverse. */
-function automaticGearFor(currentGear: number, speed: number): number {
-  let gear = Math.max(1, currentGear);
-  while (gear < 5 && rpmForGear(gear, speed) > AUTOMATIC_UPSHIFT_RPM) gear++;
-  while (gear > 1 && rpmForGear(gear, speed) < AUTOMATIC_DOWNSHIFT_RPM) gear--;
+/**
+ * Picks the automatic gear one step at a time (never Neutral/Reverse), and
+ * is throttle/brake-aware so the box has some character rather than being a
+ * plain RPM selector: flat out it holds gears longer, lifting off it
+ * upshifts early, and braking it drops gears sooner. The single-step
+ * behavior (plus the shift cooldown in update) is what keeps it predictable
+ * — it walks through the gears instead of jumping several at once.
+ */
+function automaticGearFor(currentGear: number, speed: number, throttle: boolean, brake: boolean): number {
+  const gear = Math.max(1, Math.min(5, currentGear));
+  const rpm = rpmForGear(gear, speed);
+  const upshiftRpm = throttle ? AUTOMATIC_UPSHIFT_RPM : AUTOMATIC_COAST_UPSHIFT_RPM;
+  const downshiftRpm = brake ? AUTOMATIC_BRAKE_DOWNSHIFT_RPM : AUTOMATIC_DOWNSHIFT_RPM;
+  if (gear < 5 && rpm >= upshiftRpm) return gear + 1;
+  if (gear > 1 && rpm <= downshiftRpm) return gear - 1;
   return gear;
 }
 
@@ -51,9 +75,11 @@ function automaticGearFor(currentGear: number, speed: number): number {
  * with Q (down) / E (up), no clutch. Neutral disengages the drivetrain
  * (throttle free-revs the engine instead of moving the car). Shifting
  * is instant at the physics level — an upshift drops RPM immediately,
- * a downshift jumps it — which is what makes shifting audible; a
- * downshift that would send RPM past redline is rejected outright.
- * Brake is a plain brake in this mode; reverse is only reached via Q.
+ * a downshift jumps it — which is what makes shifting audible. A
+ * downshift is never rejected: an aggressive one can briefly push RPM
+ * above redline (capped at MAX_TRANSMISSION_RPM) before settling into
+ * the normal limiter bounce — the "BRAAAP." Brake is a plain brake in
+ * this mode; reverse is only reached via Q.
  *
  * Wheels are separate objects (their own mesh, their own Object3D) but
  * are added as children of object3D at fixed local offsets, so the
@@ -67,6 +93,11 @@ export class Player {
   gear = 1; // -1 = reverse, 0 = neutral, 1-5 = forward
   rpm = IDLE_RPM;
   private limiterPhase = 0;
+  private shiftCooldown = 0; // seconds remaining before another gear change is allowed
+  private downshiftSettleRemaining = 0; // seconds remaining in the post-downshift RPM overshoot window
+  private shiftBlendRemaining = 0; // seconds remaining easing displayed RPM down after an upshift
+  private readonly frontWheels: THREE.Mesh[] = []; // steerable front wheels (rear wheels stay fixed)
+  private wheelSteer = 0; // current front-wheel yaw in radians, eased toward the steer target
 
   readonly object3D = new THREE.Group();
 
@@ -77,6 +108,9 @@ export class Player {
       const wheel = createMeshObject(WHEEL_MESH);
       wheel.position.copy(toThreeVector3(offset));
       this.object3D.add(wheel);
+      // Front wheels sit ahead of the car's center (+Y forward); keep refs
+      // so update() can yaw them with the steering. Rears stay fixed.
+      if (offset.y > 0) this.frontWheels.push(wheel);
     }
   }
 
@@ -87,6 +121,7 @@ export class Player {
     const brake = input.isHeld("s");
     const handbrake = input.isHeld("space");
     const manual = transmissionSettings.mode === "manual";
+    this.shiftCooldown = Math.max(0, this.shiftCooldown - dt);
 
     if (manual) {
       if (input.wasPressed("e")) this.shiftUp();
@@ -97,9 +132,19 @@ export class Player {
     const direction = this.gear === -1 ? -1 : 1;
 
     if (throttle && engaged) {
-      const limiting = rpmForGear(this.gear, this.speed) > REDLINE_RPM;
-      const accel = ACCELERATION * accelerationMultiplierForGear(this.gear) * (limiting ? 0.1 : 1);
       const cap = this.gear === -1 ? MAX_REVERSE_SPEED : MAX_SPEED;
+      // Torque chain: engine torque at the current RPM * the gear's torque
+      // multiplier, trimmed by a light aerodynamic-drag falloff toward the
+      // speed cap. The engine torque curve is fat mid-range and falls to
+      // zero at redline, so a gear still can't pull past its own redline
+      // speed (accel hits 0 there — gears keep mattering), and every upshift
+      // drops the revs back into the fat part of the curve: surge, drop,
+      // surge. See engineModel.ts.
+      const enginePower = engineTorqueFraction(rpmForGear(this.gear, this.speed));
+      const speedRatio = Math.min(Math.abs(this.speed) / cap, 1);
+      const dragFalloff = 1 - Math.pow(speedRatio, 3) * TOP_SPEED_FALLOFF;
+      const accel =
+        ACCELERATION * accelerationMultiplierForGear(this.gear) * enginePower * dragFalloff;
       if (direction > 0) {
         this.speed = Math.min(this.speed + accel * dt, cap);
       } else {
@@ -123,23 +168,22 @@ export class Player {
     }
     this.speed = Math.max(-MAX_REVERSE_SPEED, Math.min(MAX_SPEED, this.speed));
 
-    if (!manual) {
-      this.gear = this.speed < -0.3 ? -1 : automaticGearFor(this.gear > 0 ? this.gear : 1, this.speed);
+    if (!manual && this.shiftCooldown <= 0) {
+      const target =
+        this.speed < -0.3 ? -1 : automaticGearFor(this.gear > 0 ? this.gear : 1, this.speed, throttle, brake);
+      if (target !== this.gear) {
+        if (target > this.gear) this.shiftBlendRemaining = SHIFT_RPM_BLEND_SECONDS; // ease the RPM drop on an upshift
+        this.gear = target;
+        this.shiftCooldown = AUTOMATIC_SHIFT_COOLDOWN_SECONDS;
+      }
     }
     this.updateRpm(dt, throttle);
 
     const steerInput = (steerRight ? 1 : 0) - (steerLeft ? 1 : 0);
-    if (steerInput !== 0 && this.speed !== 0) {
-      const speedFactor =
-        MIN_STEER_SPEED_FACTOR +
-        (1 - MIN_STEER_SPEED_FACTOR) * (Math.abs(this.speed) / MAX_SPEED);
-      // Steering direction flips in reverse, matching real-world driving.
-      const reverseSign = this.speed < 0 ? -1 : 1;
-      // Negated: given the camera's lookAt-derived orientation, increasing
-      // heading (world +X-ward) reads as screen-LEFT, not screen-right —
-      // so steerRight (D) must decrease heading to visually turn right.
-      this.heading -= steerInput * reverseSign * STEERING_RATE * speedFactor * dt;
-    }
+    // Wheels first: they deflect toward the input (eased), and that deflection
+    // — not the raw key — is what steers the car.
+    this.updateWheelSteer(dt, steerInput);
+    this.applySteering(dt);
 
     this.position.x += Math.sin(this.heading) * this.speed * dt;
     this.position.y += Math.cos(this.heading) * this.speed * dt;
@@ -149,18 +193,34 @@ export class Player {
 
   /** R -> N -> 1 -> 2 -> 3 -> 4 -> 5, no clutch, one step per call. */
   private shiftUp(): void {
-    this.gear = Math.min(5, this.gear + 1);
+    if (this.shiftCooldown > 0) return;
+    const next = Math.min(5, this.gear + 1);
+    if (next === this.gear) return;
+    this.gear = next;
+    this.shiftCooldown = MANUAL_SHIFT_COOLDOWN_SECONDS;
+    this.shiftBlendRemaining = SHIFT_RPM_BLEND_SECONDS; // ease the RPM drop instead of teleporting
   }
 
-  /** 5 -> 4 -> ... -> 1 -> N -> R, no clutch. Rejects a downshift that would send RPM past redline. */
+  /**
+   * 5 -> 4 -> ... -> 1 -> N -> R, no clutch. Never rejected — an
+   * aggressive downshift is more fun to hear and learn from than to
+   * have silently refused. Instead it opens a brief window (see
+   * updateRpm) where displayed RPM can scream up to
+   * MAX_TRANSMISSION_RPM before settling into the normal limiter bounce.
+   */
   private shiftDown(): void {
+    if (this.shiftCooldown > 0) return;
     const candidate = this.gear - 1;
     if (candidate < -1) return;
-    if (candidate >= 1 && rpmForGear(candidate, this.speed) > REDLINE_RPM) return;
     this.gear = candidate;
+    this.shiftCooldown = MANUAL_SHIFT_COOLDOWN_SECONDS;
+    this.downshiftSettleRemaining = DOWNSHIFT_SETTLE_SECONDS;
   }
 
   private updateRpm(dt: number, throttleOn: boolean): void {
+    this.downshiftSettleRemaining = Math.max(0, this.downshiftSettleRemaining - dt);
+    this.shiftBlendRemaining = Math.max(0, this.shiftBlendRemaining - dt);
+
     if (this.gear === 0) {
       // Neutral: free-revving, decoupled from road speed.
       const target = throttleOn ? REDLINE_RPM * NEUTRAL_REV_TARGET_FRACTION : IDLE_RPM;
@@ -172,14 +232,68 @@ export class Player {
 
     const raw = rpmForGear(this.gear, this.speed);
     if (raw > REDLINE_RPM) {
-      // Pinned at redline: rapidly bounce against the limiter — the "time to shift" sound.
-      this.limiterPhase += dt;
-      const cycle = Math.floor(this.limiterPhase / LIMITER_BOUNCE_PERIOD) % 2;
-      this.rpm = cycle === 0 ? REDLINE_RPM : LIMITER_RPM;
+      if (this.downshiftSettleRemaining > 0) {
+        // Fresh off an aggressive downshift: let it briefly scream above
+        // redline (capped, not bouncing) instead of immediately clamping.
+        this.limiterPhase = 0;
+        this.rpm = Math.min(raw, MAX_TRANSMISSION_RPM);
+      } else {
+        // Pinned at redline with no recent downshift: rapidly bounce
+        // against the limiter — the "time to shift" sound.
+        this.limiterPhase += dt;
+        const cycle = Math.floor(this.limiterPhase / LIMITER_BOUNCE_PERIOD) % 2;
+        this.rpm = cycle === 0 ? REDLINE_RPM : LIMITER_RPM;
+      }
     } else {
       this.limiterPhase = 0;
-      this.rpm = Math.max(IDLE_RPM, raw);
+      const target = Math.max(IDLE_RPM, raw);
+      if (this.shiftBlendRemaining > 0) {
+        // Just upshifted: ease the displayed RPM down to the new gear's
+        // value over SHIFT_RPM_BLEND_SECONDS instead of teleporting, so the
+        // drop reads like a real gearchange. (Only meaningful right after an
+        // upshift, where target is well below the current RPM; normal
+        // acceleration changes raw too gradually for this to lag.)
+        this.rpm += (target - this.rpm) * Math.min(1, dt / SHIFT_RPM_BLEND_SECONDS);
+      } else {
+        this.rpm = target;
+      }
     }
+  }
+
+  /**
+   * Eases the front-wheel deflection toward the steer input (like a steering
+   * rack, not an instant snap) and rotates the wheel meshes to match. This
+   * is both what you see AND the steering input to applySteering — so the
+   * wheels swing while parked, and the car turns in as they come over.
+   * `steerInput` is -1/0/+1.
+   */
+  private updateWheelSteer(dt: number, steerInput: number): void {
+    // Negated to match the heading convention (D / steer-right decreases
+    // heading), so the wheels visibly point the way the car turns.
+    const target = -steerInput * WHEEL_MAX_STEER_RAD;
+    this.wheelSteer += (target - this.wheelSteer) * Math.min(1, WHEEL_STEER_SMOOTH_PER_SEC * dt);
+    for (const wheel of this.frontWheels) wheel.rotation.y = this.wheelSteer;
+  }
+
+  /**
+   * Turns the car from the front-wheel deflection using a kinematic bicycle
+   * model, capped by tire grip:
+   *
+   *   desired yaw = (speed / wheelbase) * tan(wheel deflection)
+   *   grip cap    = TIRE_GRIP / speed         (since lateral accel = speed * yaw)
+   *
+   * The geometry term means the car only turns while rolling and turns
+   * harder the faster it goes for a given lock; the grip cap means the
+   * contact patches can only bend the path so hard, so at speed the car
+   * washes out into understeer rather than pivoting. Reverse falls out for
+   * free: negative speed flips the yaw sign.
+   */
+  private applySteering(dt: number): void {
+    if (this.wheelSteer === 0 || this.speed === 0) return;
+    const desiredYaw = (this.speed / VEHICLE_WHEELBASE) * Math.tan(this.wheelSteer);
+    const maxYaw = TIRE_GRIP / Math.max(Math.abs(this.speed), 1);
+    const yawRate = Math.max(-maxYaw, Math.min(maxYaw, desiredYaw));
+    this.heading += yawRate * dt;
   }
 
   /** "R", "N", or the forward gear number — for the HUD. */
@@ -187,6 +301,16 @@ export class Player {
     if (this.gear === -1) return "R";
     if (this.gear === 0) return "N";
     return String(this.gear);
+  }
+
+  /** Uncapped RPM implied by the current gear/speed alone — the raw value this.rpm is clamped from, for debug telemetry. */
+  get targetRpm(): number {
+    return this.gear === 0 ? this.rpm : rpmForGear(this.gear, this.speed);
+  }
+
+  /** This gear's acceleration multiplier — 0 in Neutral, for debug telemetry. */
+  get accelMultiplier(): number {
+    return this.gear === 0 ? 0 : accelerationMultiplierForGear(this.gear);
   }
 
   /** Teleports the car to a new position/heading (e.g. spawning onto a track) and resets speed/gear/RPM. */
@@ -197,6 +321,10 @@ export class Player {
     this.gear = 1;
     this.rpm = IDLE_RPM;
     this.limiterPhase = 0;
+    this.downshiftSettleRemaining = 0;
+    this.shiftBlendRemaining = 0;
+    this.wheelSteer = 0;
+    for (const wheel of this.frontWheels) wheel.rotation.y = 0;
     this.syncObject3D();
   }
 

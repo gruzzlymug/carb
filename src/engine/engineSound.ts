@@ -1,4 +1,4 @@
-import { IDLE_RPM, REDLINE_RPM } from "../util/constants.js";
+import { IDLE_RPM, MAX_TRANSMISSION_RPM } from "../util/constants.js";
 
 const IDLE_HZ = 55;
 const REDLINE_HZ = 380;
@@ -21,11 +21,15 @@ const SMOOTHING_TAU = 0.035;
 /**
  * A synthesized engine tone (Web Audio, no audio assets): two detuned
  * sawtooth oscillators through a lowpass filter, pitched directly by
- * engine RPM (see Player.rpm / util/engineModel.ts) — rising toward
- * redline, and the limiter's rapid RPM bounce coming through as an
- * audible warble, is the shift cue in manual mode. Starts lazily on
- * the first user gesture, since browsers block audio until then
- * regardless of when the AudioContext is constructed.
+ * engine RPM (see Player.rpm / util/engineModel.ts). Player.rpm itself
+ * already models the interesting behavior — the limiter's rapid bounce,
+ * and an aggressive downshift briefly screaming above redline before
+ * settling — so this stays a pure, simple function of (rpm, throttle):
+ * no shift-event detection needed here, just render the signal.
+ * Frequency is scaled against MAX_TRANSMISSION_RPM (not REDLINE_RPM) so
+ * that scream has real pitch headroom above the normal redline whine.
+ * Starts lazily on the first user gesture, since browsers block audio
+ * until then regardless of when the AudioContext is constructed.
  */
 export class EngineSound {
   private ctx: AudioContext | null = null;
@@ -86,7 +90,7 @@ export class EngineSound {
   update(rpm: number, throttleOn: boolean): void {
     if (!this.ctx || !this.gainNode || !this.filterNode || !this.oscillatorA || !this.oscillatorB) return;
 
-    const rpmFraction = Math.max(0, Math.min(1, (rpm - IDLE_RPM) / (REDLINE_RPM - IDLE_RPM)));
+    const rpmFraction = Math.max(0, Math.min(1, (rpm - IDLE_RPM) / (MAX_TRANSMISSION_RPM - IDLE_RPM)));
     const freq = IDLE_HZ + rpmFraction * (REDLINE_HZ - IDLE_HZ);
     const now = this.ctx.currentTime;
     this.oscillatorA.frequency.setTargetAtTime(freq, now, SMOOTHING_TAU);

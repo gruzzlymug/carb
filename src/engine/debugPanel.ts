@@ -8,12 +8,20 @@ import type { Game } from "./game.js";
 /**
  * Debug panel (lil-gui): lets you switch the active camera type and
  * live-tweak its shared height/tilt/yaw settings, switch between
- * tracks, switch transmission mode, toggle the controls overlay, and
- * mute engine sound. Kept generic so more debug controls can be added
- * later.
+ * tracks, switch transmission mode, toggle the controls overlay, mute
+ * engine sound, and watch live speed/gear/RPM telemetry for tuning.
+ * Kept generic so more debug controls can be added later.
  */
 export function createDebugPanel(game: Game, controlsOverlay: ControlsOverlay): GUI {
   const gui = new GUI({ title: "Debug" });
+
+  const telemetryFolder = gui.addFolder("Telemetry");
+  telemetryFolder.add(game.telemetry, "speedKmh").name("Speed (km/h)").listen().disable();
+  telemetryFolder.add(game.telemetry, "gear").name("Gear").listen().disable();
+  telemetryFolder.add(game.telemetry, "rpm").name("RPM").listen().disable();
+  telemetryFolder.add(game.telemetry, "targetRpm").name("Target RPM (uncapped)").listen().disable();
+  telemetryFolder.add(game.telemetry, "accelMultiplier").name("Accel Multiplier").listen().disable();
+  telemetryFolder.open();
 
   const controlsFolder = gui.addFolder("Controls");
   controlsFolder
