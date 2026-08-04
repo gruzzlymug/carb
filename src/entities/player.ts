@@ -5,7 +5,7 @@ import { createCar, createWheel, WHEEL_OFFSETS } from "../graphics/procedural.js
 import { createMeshObject } from "../graphics/toThreeGeometry.js";
 import { toThreeVector3 } from "../graphics/coordinates.js";
 import { transmissionSettings } from "../util/transmissionSettings.js";
-import { rpmForGear, accelerationMultiplierForGear } from "../util/engineModel.js";
+import { rpmForGear, accelerationMultiplierForGear, engineTorqueFraction } from "../util/engineModel.js";
 import {
   MAX_SPEED,
   MAX_REVERSE_SPEED,
@@ -13,11 +13,10 @@ import {
   BRAKE_FORCE,
   HANDBRAKE_FORCE,
   FRICTION,
-  STEERING_RATE,
-  STEER_HIGH_SPEED_FALLOFF,
+  VEHICLE_WHEELBASE,
+  TIRE_GRIP,
   WHEEL_MAX_STEER_RAD,
   WHEEL_STEER_SMOOTH_PER_SEC,
-  REDLINE_TAPER_FRACTION,
   TOP_SPEED_FALLOFF,
   IDLE_RPM,
   REDLINE_RPM,
@@ -134,27 +133,18 @@ export class Player {
 
     if (throttle && engaged) {
       const cap = this.gear === -1 ? MAX_REVERSE_SPEED : MAX_SPEED;
-      // Pull is shaped by two fades rather than a hard rev-limiter cutoff:
-      //
-      //  1. Redline taper: as revs climb past REDLINE_TAPER_FRACTION of
-      //     redline, power falls linearly to zero exactly at redline. This
-      //     still caps speed within a gear (accel hits 0 there, so a patient
-      //     player can't creep to top speed stuck in 1st — gears still
-      //     matter) but the approach feels like the engine running out of
-      //     breath instead of an invisible wall.
-      //  2. Top-speed falloff: a gentle cubic fade toward the speed cap, so
-      //     the final few m/s strain rather than snapping to the limit.
-      const rpmRatio = rpmForGear(this.gear, this.speed) / REDLINE_RPM;
-      const redlinePower =
-        rpmRatio >= 1
-          ? 0
-          : rpmRatio > REDLINE_TAPER_FRACTION
-            ? 1 - (rpmRatio - REDLINE_TAPER_FRACTION) / (1 - REDLINE_TAPER_FRACTION)
-            : 1;
+      // Torque chain: engine torque at the current RPM * the gear's torque
+      // multiplier, trimmed by a light aerodynamic-drag falloff toward the
+      // speed cap. The engine torque curve is fat mid-range and falls to
+      // zero at redline, so a gear still can't pull past its own redline
+      // speed (accel hits 0 there — gears keep mattering), and every upshift
+      // drops the revs back into the fat part of the curve: surge, drop,
+      // surge. See engineModel.ts.
+      const enginePower = engineTorqueFraction(rpmForGear(this.gear, this.speed));
       const speedRatio = Math.min(Math.abs(this.speed) / cap, 1);
-      const topSpeedFalloff = 1 - Math.pow(speedRatio, 3) * TOP_SPEED_FALLOFF;
+      const dragFalloff = 1 - Math.pow(speedRatio, 3) * TOP_SPEED_FALLOFF;
       const accel =
-        ACCELERATION * accelerationMultiplierForGear(this.gear) * redlinePower * topSpeedFalloff;
+        ACCELERATION * accelerationMultiplierForGear(this.gear) * enginePower * dragFalloff;
       if (direction > 0) {
         this.speed = Math.min(this.speed + accel * dt, cap);
       } else {
@@ -190,20 +180,10 @@ export class Player {
     this.updateRpm(dt, throttle);
 
     const steerInput = (steerRight ? 1 : 0) - (steerLeft ? 1 : 0);
-    if (steerInput !== 0 && this.speed !== 0) {
-      // Full steering authority at low/medium speed, easing off at high speed
-      // so the car doesn't get twitchy at 130 mph. (Arcade feel, not a sim —
-      // 1.0 at a crawl down to ~0.65 at the cap.)
-      const speedRatio = Math.min(Math.abs(this.speed) / MAX_SPEED, 1);
-      const speedFactor = 1 - STEER_HIGH_SPEED_FALLOFF * Math.pow(speedRatio, 1.5);
-      // Steering direction flips in reverse, matching real-world driving.
-      const reverseSign = this.speed < 0 ? -1 : 1;
-      // Negated: given the camera's lookAt-derived orientation, increasing
-      // heading (world +X-ward) reads as screen-LEFT, not screen-right —
-      // so steerRight (D) must decrease heading to visually turn right.
-      this.heading -= steerInput * reverseSign * STEERING_RATE * speedFactor * dt;
-    }
+    // Wheels first: they deflect toward the input (eased), and that deflection
+    // — not the raw key — is what steers the car.
     this.updateWheelSteer(dt, steerInput);
+    this.applySteering(dt);
 
     this.position.x += Math.sin(this.heading) * this.speed * dt;
     this.position.y += Math.cos(this.heading) * this.speed * dt;
@@ -281,10 +261,11 @@ export class Player {
   }
 
   /**
-   * Cosmetic: yaws the front wheels toward the steer input, eased so they
-   * swing like a steering rack instead of snapping. Independent of speed
-   * (the wheels turn even while parked) and of the heading physics — this
-   * only rotates the wheel meshes. `steerInput` is -1/0/+1.
+   * Eases the front-wheel deflection toward the steer input (like a steering
+   * rack, not an instant snap) and rotates the wheel meshes to match. This
+   * is both what you see AND the steering input to applySteering — so the
+   * wheels swing while parked, and the car turns in as they come over.
+   * `steerInput` is -1/0/+1.
    */
   private updateWheelSteer(dt: number, steerInput: number): void {
     // Negated to match the heading convention (D / steer-right decreases
@@ -292,6 +273,27 @@ export class Player {
     const target = -steerInput * WHEEL_MAX_STEER_RAD;
     this.wheelSteer += (target - this.wheelSteer) * Math.min(1, WHEEL_STEER_SMOOTH_PER_SEC * dt);
     for (const wheel of this.frontWheels) wheel.rotation.y = this.wheelSteer;
+  }
+
+  /**
+   * Turns the car from the front-wheel deflection using a kinematic bicycle
+   * model, capped by tire grip:
+   *
+   *   desired yaw = (speed / wheelbase) * tan(wheel deflection)
+   *   grip cap    = TIRE_GRIP / speed         (since lateral accel = speed * yaw)
+   *
+   * The geometry term means the car only turns while rolling and turns
+   * harder the faster it goes for a given lock; the grip cap means the
+   * contact patches can only bend the path so hard, so at speed the car
+   * washes out into understeer rather than pivoting. Reverse falls out for
+   * free: negative speed flips the yaw sign.
+   */
+  private applySteering(dt: number): void {
+    if (this.wheelSteer === 0 || this.speed === 0) return;
+    const desiredYaw = (this.speed / VEHICLE_WHEELBASE) * Math.tan(this.wheelSteer);
+    const maxYaw = TIRE_GRIP / Math.max(Math.abs(this.speed), 1);
+    const yawRate = Math.max(-maxYaw, Math.min(maxYaw, desiredYaw));
+    this.heading += yawRate * dt;
   }
 
   /** "R", "N", or the forward gear number — for the HUD. */
