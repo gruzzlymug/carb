@@ -94,6 +94,15 @@ export const AUTOMATIC_UPSHIFT_RPM = 6600; // full throttle
 export const AUTOMATIC_COAST_UPSHIFT_RPM = 5000; // partial / no throttle
 export const AUTOMATIC_DOWNSHIFT_RPM = 3000; // coasting / cruising
 export const AUTOMATIC_BRAKE_DOWNSHIFT_RPM = 3500; // under braking, drop gears sooner
+// Kickdown: under throttle, if the current gear has fallen below the useful
+// part of the power band (RPM < AUTOMATIC_KICKDOWN_RPM), the box drops a gear
+// when doing so gives meaningfully more torque — the "floor it in 5th at
+// 110 mph and it grabs a lower gear" behavior a plain RPM selector misses.
+export const AUTOMATIC_KICKDOWN_RPM = 4000; // only consider kickdown below this RPM
+export const AUTOMATIC_KICKDOWN_MIN_GAIN = 0.12; // require >12% more torque to bother
+// Safety valve: the automatic never downshifts into a gear that would spin
+// past this RPM. (Manual keeps its theatrical over-redline downshift.)
+export const AUTOMATIC_MAX_DOWNSHIFT_RPM = 6800;
 // Manual shifts are snappy; the automatic gets a slightly longer settle so
 // it doesn't machine-gun through gears while stepping one at a time.
 export const MANUAL_SHIFT_COOLDOWN_MS = 90;
@@ -106,6 +115,15 @@ export const DOWNSHIFT_SETTLE_MS = 120;
 // window instead of teleporting, so the drop reads (and later sounds) like
 // a real gearchange rather than an instant jump.
 export const SHIFT_RPM_BLEND_MS = 90;
+// Upshift torque interruption: for this brief window after an upshift, drive
+// torque is cut to SHIFT_TORQUE_CUT_FACTOR of normal, so a shift reads as
+// "scream -> shift -> tiny thump -> power back" instead of an instant jump
+// in acceleration (1->2 is otherwise a ~88% step). Physical event, not a
+// lingering multiplier — steady-state pull after the window is unchanged.
+// Downshifts get NO cut (their surge is intended). Keep this short: 55 ms is
+// ~3-4 frames at 60 FPS; longer just makes the car feel sluggish.
+export const SHIFT_TORQUE_CUT_MS = 55;
+export const SHIFT_TORQUE_CUT_FACTOR = 0.15; // torque multiplier during the cut (lower = more severe)
 
 // Track / road
 export const ROAD_WIDTH = 10; // meters

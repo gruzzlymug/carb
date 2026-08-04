@@ -24,12 +24,32 @@ export interface Telemetry {
   gear: string;
   rpm: number;
   targetRpm: number;
-  accelMultiplier: number;
+  engineTorque: number; // 0..1 from the torque curve at the current drivetrain RPM
+  gearMultiplier: number; // gear torque multiplier
+  longAccel: number; // longitudinal acceleration, m/s^2 (negative under braking)
+  wheelSteerDeg: number; // front-wheel deflection, degrees
+  yawRateDeg: number; // deg/s
+  lateralAccel: number; // m/s^2
+  gripLimited: string; // "yes"/"no" — is the steering understeering at the grip cap
+  shiftCutMs: number; // ms remaining in the post-upshift torque cut (0 when inactive)
 }
 
 export class Game {
   /** Kept up to date each frame; the debug panel binds directly to this via lil-gui's .listen(). */
-  readonly telemetry: Telemetry = { speedKmh: 0, gear: "1", rpm: 0, targetRpm: 0, accelMultiplier: 0 };
+  readonly telemetry: Telemetry = {
+    speedKmh: 0,
+    gear: "1",
+    rpm: 0,
+    targetRpm: 0,
+    engineTorque: 0,
+    gearMultiplier: 0,
+    longAccel: 0,
+    wheelSteerDeg: 0,
+    yawRateDeg: 0,
+    lateralAccel: 0,
+    gripLimited: "no",
+    shiftCutMs: 0,
+  };
 
   private readonly input = new Input();
   private readonly renderer: Renderer;
@@ -121,7 +141,14 @@ export class Game {
     this.telemetry.gear = this.player.gearLabel;
     this.telemetry.rpm = Math.round(this.player.rpm);
     this.telemetry.targetRpm = Math.round(this.player.targetRpm);
-    this.telemetry.accelMultiplier = Math.round(this.player.accelMultiplier * 100) / 100;
+    this.telemetry.engineTorque = Math.round(this.player.engineTorque * 100) / 100;
+    this.telemetry.gearMultiplier = Math.round(this.player.accelMultiplier * 100) / 100;
+    this.telemetry.longAccel = Math.round(this.player.longitudinalAccel * 100) / 100;
+    this.telemetry.wheelSteerDeg = Math.round(this.player.wheelSteerDeg);
+    this.telemetry.yawRateDeg = Math.round(this.player.yawRateDeg);
+    this.telemetry.lateralAccel = Math.round(this.player.lateralAccel * 100) / 100;
+    this.telemetry.gripLimited = this.player.isGripLimited ? "yes" : "no";
+    this.telemetry.shiftCutMs = Math.round(this.player.shiftTorqueCutRemainingMs);
 
     this.input.endFrame();
   }
