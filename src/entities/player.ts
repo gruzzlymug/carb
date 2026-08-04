@@ -130,7 +130,9 @@ export class Player {
   private lastLongAccel = 0; // longitudinal acceleration, m/s^2 (negative under braking)
   private lastYawRate = 0; // rad/s
   private lastLateralAccel = 0; // m/s^2
-  private lastGripLimited = false; // was the steering capped by tire grip (understeering)
+  private lastGripLimited = false; // yaw was capped by tire grip (genuine understeer)
+  private lastSteeringLimited = false; // at full lock but NOT grip-limited (out of steering angle)
+  private lastTurnRadius = Infinity; // |speed / yawRate|, meters (Infinity when going straight)
 
   readonly object3D = new THREE.Group();
 
@@ -340,8 +342,13 @@ export class Player {
       this.lastYawRate = 0;
       this.lastLateralAccel = 0;
       this.lastGripLimited = false;
+      this.lastSteeringLimited = false;
+      this.lastTurnRadius = Infinity;
       return;
     }
+    // Two independent limits on how tight the car can turn: the steering
+    // geometry (desiredYaw at the current wheel angle) and the tire-grip cap
+    // (maxYaw). Whichever is smaller wins.
     const desiredYaw = (this.speed / VEHICLE_WHEELBASE) * Math.tan(this.wheelSteer);
     const maxYaw = TIRE_GRIP / Math.max(Math.abs(this.speed), 1);
     const yawRate = Math.max(-maxYaw, Math.min(maxYaw, desiredYaw));
@@ -349,6 +356,12 @@ export class Player {
     this.lastYawRate = yawRate;
     this.lastLateralAccel = Math.abs(this.speed * yawRate);
     this.lastGripLimited = Math.abs(desiredYaw) > maxYaw;
+    // At full lock and still not grip-limited => running out of steering angle,
+    // not grip (only happens at very low speed). Distinguishing the two makes
+    // it clear whether more grip would even help.
+    const atFullLock = Math.abs(this.wheelSteer) >= WHEEL_MAX_STEER_RAD - 1e-3;
+    this.lastSteeringLimited = atFullLock && !this.lastGripLimited;
+    this.lastTurnRadius = Math.abs(yawRate) > 1e-4 ? Math.abs(this.speed / yawRate) : Infinity;
   }
 
   /** "R", "N", or the forward gear number — for the HUD. */
@@ -396,6 +409,18 @@ export class Player {
   /** Whether steering was capped by tire grip (understeering) last frame. Telemetry. */
   get isGripLimited(): boolean {
     return this.lastGripLimited;
+  }
+
+  /** What (if anything) is limiting cornering right now — for tuning. Telemetry. */
+  get steeringLimit(): "grip" | "steering" | "none" {
+    if (this.lastGripLimited) return "grip";
+    if (this.lastSteeringLimited) return "steering";
+    return "none";
+  }
+
+  /** Current turn radius in meters (|speed / yawRate|); 0 reported when going straight. Telemetry. */
+  get turnRadiusM(): number {
+    return Number.isFinite(this.lastTurnRadius) ? this.lastTurnRadius : 0;
   }
 
   /** Whether the post-upshift torque cut is currently active. Telemetry. */

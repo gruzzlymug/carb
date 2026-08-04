@@ -27,7 +27,10 @@ export const TIRE_GRIP = 16; // meters/second^2 (~1.6g)
 // it reads like a steering rack rather than snapping. This is both the
 // visible wheel angle AND the steering input to the bicycle model above.
 export const WHEEL_MAX_STEER_RAD = 0.7; // front-wheel yaw at full lock (~40°)
-export const WHEEL_STEER_SMOOTH_PER_SEC = 16; // rate the wheels ease toward their target angle
+// How fast the deflection eases toward the input (exponential approach). Higher
+// = crisper turn-in, without changing max cornering (that's the grip cap). At 28
+// the wheels reach ~99% of lock in ~0.15 s vs ~0.27 s at 16.
+export const WHEEL_STEER_SMOOTH_PER_SEC = 28;
 
 // Engine/transmission RPM model. Not a real drivetrain simulation —
 // just enough that speed and RPM are related through gear ratio the

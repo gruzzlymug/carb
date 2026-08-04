@@ -30,7 +30,8 @@ export interface Telemetry {
   wheelSteerDeg: number; // front-wheel deflection, degrees
   yawRateDeg: number; // deg/s
   lateralAccel: number; // m/s^2
-  gripLimited: string; // "yes"/"no" — is the steering understeering at the grip cap
+  turnRadius: number; // current turn radius, meters (0 when straight)
+  cornerLimit: string; // "grip" / "steering" / "none" — what's limiting cornering
   shiftCutMs: number; // ms remaining in the post-upshift torque cut (0 when inactive)
 }
 
@@ -47,7 +48,8 @@ export class Game {
     wheelSteerDeg: 0,
     yawRateDeg: 0,
     lateralAccel: 0,
-    gripLimited: "no",
+    turnRadius: 0,
+    cornerLimit: "none",
     shiftCutMs: 0,
   };
 
@@ -147,7 +149,8 @@ export class Game {
     this.telemetry.wheelSteerDeg = Math.round(this.player.wheelSteerDeg);
     this.telemetry.yawRateDeg = Math.round(this.player.yawRateDeg);
     this.telemetry.lateralAccel = Math.round(this.player.lateralAccel * 100) / 100;
-    this.telemetry.gripLimited = this.player.isGripLimited ? "yes" : "no";
+    this.telemetry.turnRadius = Math.round(this.player.turnRadiusM);
+    this.telemetry.cornerLimit = this.player.steeringLimit;
     this.telemetry.shiftCutMs = Math.round(this.player.shiftTorqueCutRemainingMs);
 
     this.input.endFrame();
