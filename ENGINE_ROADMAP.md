@@ -72,7 +72,7 @@ Left alone: `trackSpline.ts`/`trackDefinitions.ts` geometry generation untouched
 `TrackWorld`'s mesh/gameplay-data mixing (noted in the earlier `ControlState` pass) still
 stands — not addressed here, still just future work.
 
-## 2. Fix/upgrade the vehicle dynamics model
+## 2. Fix/upgrade the vehicle dynamics model  ⏳ IN PROGRESS (Pass 6 done)
 
 Move beyond the current essentially kinematic bicycle model toward usable arcade vehicle
 dynamics: acceleration/braking, lateral grip, weight-transfer feel, steering sensitivity,
@@ -82,6 +82,20 @@ speed-dependent behavior.
 
 **Why:** the current desiredYaw → grip-cap model is good scaffolding, but it will
 eventually limit driving feel more than graphics or engine architecture.
+
+**Progress:** this item continues the numbered-pass sequence already underway in
+`PHYSICS_V2_PLAN.md` rather than starting a separate doc — Pass 6 (friction circle:
+braking/throttle now eats into cornering grip, continuously, replacing the old flat
+`TIRE_GRIP / speed` cap) is done and verified there. That was also the clearest fix of
+the "binary threshold" gap in the old model. See `PHYSICS_V2_PLAN.md` Pass 6 for the
+full writeup and validation numbers.
+
+**Still open for this item** (in the order that plan already lays out): Pass 7 —
+handbrake reduces rear grip so the car actually rotates (arcade handbrake turn) instead
+of just decelerating in a straight line; this needs a rear/front grip split, which is
+also the natural home for weight-transfer feel. Speed-dependent steering sensitivity
+and a surface-grip multiplier (for the future off-road pass, item 6) are noted as later
+candidates in that doc too, not yet started.
 
 ## 3. Make speed/acceleration performance intentional
 
@@ -142,4 +156,7 @@ geometry and physics.
 ## Status log
 
 - 2026-08-04 — Roadmap written. Pass 1 (`TrackQuery` API) built, verified against known
-  geometry, wired into telemetry/debug panel. Next: Pass 2, vehicle dynamics model.
+  geometry, wired into telemetry/debug panel.
+- 2026-08-04 — Item 2 (vehicle dynamics), Pass 6 (friction circle) done and verified —
+  see `PHYSICS_V2_PLAN.md`. Next: Pass 7 (handbrake rear-grip rotation), or move on to
+  item 3 (performance envelope) if Pass 7 needs more design time first.

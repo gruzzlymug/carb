@@ -83,11 +83,58 @@ Do now (steps 1–3):  ✅ DONE
 - [ ] Then test existing tracks at 50/60/70/80 mph in-browser; only then consider TIRE_GRIP. ← YOU
 
 Deferred (later passes, in order):
-- [ ] Pass 6 — friction circle: `availableLateral = sqrt(max(0, TIRE_GRIP² − longAccel²))`,
+- [x] Pass 6 — friction circle: `availableLateral = sqrt(max(0, TIRE_GRIP² − longAccel²))`,
       `maxYaw = availableLateral / speed`. Braking then eats cornering grip → brake-then-turn loop.
+      **DONE** (see below).
 - [ ] Pass 7 — handbrake reduces REAR grip so the car rotates (arcade handbrake turn), instead
       of just decelerating. (Needs a rear-grip / rotation term.)
 - [ ] TIRE_GRIP tuning — only after the above and in-browser testing.
+
+## Pass 6 — Friction circle: braking/throttle eats cornering grip  ✅ DONE
+Goal: replace the flat `maxYaw = TIRE_GRIP / speed` cap with a friction circle, so
+hard braking or hard acceleration mid-corner visibly (and continuously) costs cornering
+grip — "brake-then-turn" becomes a real skill, not just flavor text. Progressive, not a
+threshold: this was also the one clear violation of the "grip → slip, not a binary
+threshold" rule in the existing model (the flat cap ignored longitudinal load entirely).
+
+- [x] `applySteering(dt, longAccel)` now takes this step's actual longitudinal
+      acceleration (measured right after the throttle/brake/friction block, same step —
+      not lagged a frame) and computes
+      `availableLateral = sqrt(max(0, TIRE_GRIP² − longAccel²))`,
+      `maxYaw = availableLateral / max(|speed|, 1)`.
+- [x] At `longAccel = 0` this is identical to the old flat cap — no regression for
+      steady-speed cornering.
+- [x] No new constants; no powertrain/transmission/gearing touched; `Player.update`'s
+      signature and all existing telemetry getters unchanged (only what feeds `maxYaw`
+      changed internally).
+- Validation (dist-backed sim, driving the actual compiled `Player`, not a
+  reimplementation) ✅:
+  - Coasting (engine-braking friction only, longAccel ≈ −6): lateral accel holds at
+    `sqrt(16² − 6²) ≈ 14.83 m/s²` at every speed (30/60/90/120/150 mph) — matches the
+    formula exactly, confirming it isn't accidentally speed-dependent.
+  - Full throttle mid-corner vs. coasting at the same speed: turn radius opens up
+    slightly (60 mph: 46.8 m coast → 49.3 m accel; 100 mph: 131.9 m → 138.6 m) —
+    accelerating harder than passive coast friction visibly costs a little grip, as
+    intended.
+  - Full brake mid-corner (longAccel = −20, exceeds `TIRE_GRIP` = 16): available
+    lateral clamps to 0 at every speed tested — full-lock steering produces zero yaw,
+    `steeringLimit` reports `"grip"`. This is the brake-then-turn loop the pass exists
+    to create: mid-corner panic braking goes straight, not a magic save.
+  - Frame-rate independence: the new terms (`longAccel`, `TIRE_GRIP`) are both
+    instantaneous, no dt baked in — same dt-independence argument as the original cap.
+
+**Noted side effect (expected, not a regression):** because ordinary engine-braking
+friction (`FRICTION = 6`) now also counts against the circle, steady coasting through a
+corner is very slightly less grippy than before (≈14.83 vs. the old flat 16 m/s²,
+~7% wider radius) — friction is real longitudinal deceleration and the friction circle
+doesn't distinguish its source from active braking. If that reads as "the car feels
+slightly looser than before even off the brakes," that's this, not a bug — call it out
+if it doesn't feel right in-browser.
+
+Left alone this pass (candidates for a future one): weight-transfer asymmetry (real
+cars have more grip available for braking than accelerating, and more front grip under
+braking vs. rear); Pass 7's rear-grip handbrake rotation, which is the natural next step
+since it needs the same kind of "load affects grip" reasoning this pass introduced.
 
 ## Pass FS — Fixed-step physics, decoupled from rendering  ✅ DONE
 Physics now runs at a fixed **120 Hz** via an accumulator, independent of the

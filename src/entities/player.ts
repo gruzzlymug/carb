@@ -222,6 +222,10 @@ export class Player {
       if (Math.abs(this.speed) < FRICTION * dt) this.speed = 0;
     }
     this.speed = Math.max(-MAX_REVERSE_SPEED, Math.min(MAX_SPEED, this.speed));
+    // Measured now (not at the end of update()): this is this step's actual
+    // longitudinal accel, needed below by applySteering's friction circle.
+    const longAccel = dt > 0 ? (this.speed - speedBefore) / dt : 0;
+    this.lastLongAccel = longAccel;
 
     if (!manual && this.shiftCooldown <= 0) {
       const target =
@@ -241,12 +245,10 @@ export class Player {
     // Wheels first: they deflect toward the input (eased), and that deflection
     // — not the raw key — is what steers the car.
     this.updateWheelSteer(dt, steerInput);
-    this.applySteering(dt);
+    this.applySteering(dt, longAccel);
 
     this.position.x += Math.sin(this.heading) * this.speed * dt;
     this.position.y += Math.cos(this.heading) * this.speed * dt;
-
-    this.lastLongAccel = dt > 0 ? (this.speed - speedBefore) / dt : 0;
     // Visuals are applied at render time (syncVisuals) from the interpolated
     // pose, not here — physics only advances state.
   }
@@ -337,18 +339,24 @@ export class Player {
 
   /**
    * Turns the car from the front-wheel deflection using a kinematic bicycle
-   * model, capped by tire grip:
+   * model, capped by a friction circle:
    *
-   *   desired yaw = (speed / wheelbase) * tan(wheel deflection)
-   *   grip cap    = TIRE_GRIP / speed         (since lateral accel = speed * yaw)
+   *   desired yaw       = (speed / wheelbase) * tan(wheel deflection)
+   *   available lateral = sqrt(max(0, TIRE_GRIP² − longAccel²))
+   *   grip cap          = available lateral / speed   (lateral accel = speed * yaw)
    *
    * The geometry term means the car only turns while rolling and turns
-   * harder the faster it goes for a given lock; the grip cap means the
-   * contact patches can only bend the path so hard, so at speed the car
-   * washes out into understeer rather than pivoting. Reverse falls out for
-   * free: negative speed flips the yaw sign.
+   * harder the faster it goes for a given lock. The grip cap used to be a
+   * flat TIRE_GRIP/speed — now it's a friction circle: TIRE_GRIP is the
+   * tires' total available grip, and accelerating or braking hard (`longAccel`,
+   * measured this same step) spends part of that budget, leaving less for
+   * cornering. This is what makes trail-braking and "gas it mid-corner and
+   * you'll wash out" meaningful, and it's continuous — grip fades in as
+   * longAccel fades out, not a step function. At longAccel = 0 this reduces
+   * to exactly the old TIRE_GRIP/speed cap. Reverse falls out for free:
+   * negative speed flips the yaw sign.
    */
-  private applySteering(dt: number): void {
+  private applySteering(dt: number, longAccel: number): void {
     if (this.wheelSteer === 0 || this.speed === 0) {
       this.lastYawRate = 0;
       this.lastLateralAccel = 0;
@@ -361,7 +369,8 @@ export class Player {
     // geometry (desiredYaw at the current wheel angle) and the tire-grip cap
     // (maxYaw). Whichever is smaller wins.
     const desiredYaw = (this.speed / VEHICLE_WHEELBASE) * Math.tan(this.wheelSteer);
-    const maxYaw = TIRE_GRIP / Math.max(Math.abs(this.speed), 1);
+    const availableLateral = Math.sqrt(Math.max(0, TIRE_GRIP * TIRE_GRIP - longAccel * longAccel));
+    const maxYaw = availableLateral / Math.max(Math.abs(this.speed), 1);
     const yawRate = Math.max(-maxYaw, Math.min(maxYaw, desiredYaw));
     this.heading += yawRate * dt;
     this.lastYawRate = yawRate;
