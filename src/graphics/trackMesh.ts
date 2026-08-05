@@ -1,13 +1,8 @@
 import type { Mesh, Face } from "./mesh.js";
 import type { Vec3 } from "../math/vector3.js";
+import { perpendicular } from "../math/vector3.js";
 import type { SampledLoop } from "../world/trackSpline.js";
 import { ROAD_WIDTH, TRACK_GROUND_MARGIN } from "../util/constants.js";
-
-/** The unit "left" direction relative to a tangent, in the flat ground plane. */
-export function perpendicular(tangent: Vec3): Vec3 {
-  const length = Math.hypot(tangent.x, tangent.y) || 1;
-  return { x: -tangent.y / length, y: tangent.x / length, z: 0 };
-}
 
 function offsetPoint(center: Vec3, perp: Vec3, distance: number, z: number): Vec3 {
   return { x: center.x + perp.x * distance, y: center.y + perp.y * distance, z };

@@ -35,3 +35,9 @@ export function crossVec3(a: Vec3, b: Vec3): Vec3 {
 export function dotVec3(a: Vec3, b: Vec3): number {
   return a.x * b.x + a.y * b.y + a.z * b.z;
 }
+
+/** The unit "left" direction relative to a tangent, in the flat (z = 0) ground plane. */
+export function perpendicular(tangent: Vec3): Vec3 {
+  const length = Math.hypot(tangent.x, tangent.y) || 1;
+  return { x: -tangent.y / length, y: tangent.x / length, z: 0 };
+}

@@ -1,8 +1,10 @@
 import type { Vec3 } from "../math/vector3.js";
+import { perpendicular } from "../math/vector3.js";
 import type { Mesh } from "../graphics/mesh.js";
-import { createRoadRibbonMesh, createGroundMesh, perpendicular } from "../graphics/trackMesh.js";
+import { createRoadRibbonMesh, createGroundMesh } from "../graphics/trackMesh.js";
 import { TRACK_GENERATORS, DEFAULT_TRACK_TYPE } from "./trackDefinitions.js";
 import { sampleTrack, type SampledLoop } from "./trackSpline.js";
+import { buildTrackQuery, type TrackQuery } from "./trackQuery.js";
 import { ROAD_WIDTH, GAS_STATION_MIN_INTERVAL_METERS, GAS_STATION_MAX_INTERVAL_METERS } from "../util/constants.js";
 
 export interface GasStationPlacement {
@@ -10,12 +12,13 @@ export interface GasStationPlacement {
   headingRad: number;
 }
 
-/** Everything needed to render and spawn into one selected track. Built once, not streamed. */
+/** Everything needed to render, spawn into, and query one selected track. Built once, not streamed. */
 export interface TrackWorld {
   roadMesh: Mesh;
   groundMesh: Mesh;
   gasStations: GasStationPlacement[];
   spawn: { position: Vec3; headingRad: number };
+  query: TrackQuery;
 }
 
 function randomGasStationInterval(): number {
@@ -62,6 +65,7 @@ export function buildTrackWorld(trackType: string): TrackWorld {
   const roadMesh = createRoadRibbonMesh(sampled.loops);
   const groundMesh = createGroundMesh(sampled.loops);
   const gasStations = sampled.loops.flatMap(placeGasStationsOnLoop);
+  const query = buildTrackQuery(sampled);
 
   const spawnSample = sampled.loops[0].samples[0];
   const spawn = {
@@ -69,5 +73,5 @@ export function buildTrackWorld(trackType: string): TrackWorld {
     headingRad: headingFromTangent(spawnSample.tangent),
   };
 
-  return { roadMesh, groundMesh, gasStations, spawn };
+  return { roadMesh, groundMesh, gasStations, spawn, query };
 }

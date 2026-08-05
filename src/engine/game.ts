@@ -7,6 +7,7 @@ import { EngineSound } from "./engineSound.js";
 import { CAMERA_TYPES, DEFAULT_CAMERA_TYPE, type CameraController } from "./cameras/index.js";
 import { Player } from "../entities/player.js";
 import { buildTrackWorld, type TrackWorld } from "../world/trackWorld.js";
+import type { TrackQuery } from "../world/trackQuery.js";
 import { DEFAULT_TRACK_TYPE } from "../world/trackDefinitions.js";
 import { PHYSICS_DT, MAX_FRAME_SECONDS } from "../util/constants.js";
 
@@ -32,6 +33,9 @@ export interface Telemetry {
   turnRadius: number; // current turn radius, meters (0 when straight)
   cornerLimit: string; // "grip" / "steering" / "none" — what's limiting cornering
   shiftCutMs: number; // ms remaining in the post-upshift torque cut (0 when inactive)
+  lateralOffsetM: number; // signed distance from the nearest centerline; + = left, - = right
+  trackCurvature: number; // signed curvature (1/m) of the track at the nearest point
+  onRoad: boolean; // whether the car's position falls within the paved road width
 }
 
 export class Game {
@@ -50,6 +54,9 @@ export class Game {
     turnRadius: 0,
     cornerLimit: "none",
     shiftCutMs: 0,
+    lateralOffsetM: 0,
+    trackCurvature: 0,
+    onRoad: true,
   };
 
   private readonly input = new Input();
@@ -65,6 +72,8 @@ export class Game {
   private canvasWidth = 0;
   private canvasHeight = 0;
   private spawn: TrackWorld["spawn"] = { position: { x: 0, y: 0, z: 0 }, headingRad: 0 };
+  /** Always assigned in the constructor via setTrackType before the loop starts. */
+  private trackQuery!: TrackQuery;
 
   constructor(canvas: HTMLCanvasElement) {
     this.renderer = new Renderer(canvas);
@@ -105,6 +114,7 @@ export class Game {
     const world = buildTrackWorld(type);
     this.trackView.show(world);
     this.spawn = world.spawn;
+    this.trackQuery = world.query;
     this.player.respawn(this.spawn.position, this.spawn.headingRad);
   }
 
@@ -171,5 +181,10 @@ export class Game {
     this.telemetry.turnRadius = Math.round(this.player.turnRadiusM);
     this.telemetry.cornerLimit = this.player.steeringLimit;
     this.telemetry.shiftCutMs = Math.round(this.player.shiftTorqueCutRemainingMs);
+
+    const surface = this.trackQuery.nearestPoint(this.player.position);
+    this.telemetry.lateralOffsetM = Math.round(surface.lateralOffset * 100) / 100;
+    this.telemetry.trackCurvature = Math.round(surface.curvature * 1000) / 1000;
+    this.telemetry.onRoad = surface.onRoad;
   }
 }
