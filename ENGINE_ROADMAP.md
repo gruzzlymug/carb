@@ -432,9 +432,24 @@ pass once items 3-6 above are done, in-browser, with the real telemetry.
   instead of tuning individual constants reactively. Current baseline, not yet treated
   as a deliberate target: `ACCELERATION = 8` gives full-throttle 0→60 mph ≈2.9s,
   0→100 ≈5.8s, 0→130 ≈8.2s, 0→150 ≈12.6s; top speed ≈152 mph in 5th.
-- **Track geometry resize** (item 1's known gap): corner radii and straight lengths
-  need the performance envelope above finalized first, then size against
-  `minCornerRadius(speed) = speed² / TIRE_GRIP`.
+- **Track geometry resize** (item 1's known gap): ✅ Pass 1 done, out of turn (done before
+  the performance envelope above was formally finalized — user-directed, current car
+  numbers used as the target instead). `ROAD_WIDTH` 10 → 14m; corner radii: rounded
+  rectangle 22 → 55m, oval 35 → 60m, figure-eight 45 → 65m (footprints enlarged to
+  match: rounded-rect `halfWidth/halfHeight` 70/45 → 90/55, oval `halfStraight` 90 →
+  110). New grip-limited corner speeds: ~66/69/72 mph (target was 60-75 mph — matches).
+  `trackQuery.test.ts`'s hardcoded geometry constants updated to match (was already
+  fragile to any geometry change — the values are named constants now, but still have
+  to be kept in sync by hand since there's no way to derive them from the sampled
+  output). **Note:** with `cornerRadius == halfHeight` on the rounded-rectangle track,
+  the left/right straights collapse to zero length — it's now geometrically a stadium
+  (long top/bottom straights, semicircular ends), not 4 distinct corners. That's a
+  direct consequence of the requested numbers, not a bug; worth knowing before judging
+  the shape in-browser. **Not done:** the "don't make every corner the same" redesign
+  (sweepers, opening-radius corners, S-curves, varied hairpin-vs-sweeper mix) — explicitly
+  flagged as Pass 2+, only worth doing after driving Pass 1. Still open:
+  `minCornerRadius(speed) = speed² / TIRE_GRIP` as the formal sizing formula once a
+  performance envelope is actually finalized.
 - **Surface-grip/drag multiplier values** in `world/surfaceState.ts` (item 5, done):
   `shoulder` grip ×0.7 / drag ×1.3, `offRoad` grip ×0.45 / drag ×2.2 — placeholder, not
   measured/tuned. Known issue to address in this pass: off-road coast friction alone

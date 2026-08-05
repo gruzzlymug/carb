@@ -43,9 +43,9 @@ const CORNER_SAMPLES = 8;
 
 /** A rectangle with rounded corners — a compact, technical-feeling loop. */
 export function createRoundedRectangleTrack(): TrackDefinition {
-  const halfWidth = 70;
-  const halfHeight = 45;
-  const cornerRadius = 22;
+  const halfWidth = 90;
+  const halfHeight = 55;
+  const cornerRadius = 55;
   const cx = halfWidth - cornerRadius;
   const cy = halfHeight - cornerRadius;
 
@@ -65,8 +65,8 @@ export function createRoundedRectangleTrack(): TrackDefinition {
 
 /** A stadium/oval: two long straights joined by semicircular ends — the "endless straight road" feel, looped. */
 export function createOvalTrack(): TrackDefinition {
-  const halfStraight = 90;
-  const radius = 35;
+  const halfStraight = 110;
+  const radius = 60;
 
   const points: Vec3[] = [
     { x: radius, y: -halfStraight, z: 0 }, // bottom of right straight
@@ -86,7 +86,7 @@ export function createOvalTrack(): TrackDefinition {
  * see the TrackDefinition doc comment for why that distinction matters.
  */
 export function createFigureEightTrack(): TrackDefinition {
-  const radius = 45;
+  const radius = 65;
   const samplesPerLoop = 20;
 
   // Both loops start and end at the shared origin (0, 0) — that's the

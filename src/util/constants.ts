@@ -167,7 +167,10 @@ export const SHIFT_TORQUE_CUT_MS = 55;
 export const SHIFT_TORQUE_CUT_FACTOR = 0.15; // torque multiplier during the cut (lower = more severe)
 
 // Track / road
-export const ROAD_WIDTH = 10; // meters
+// Widened from 10m and corner radii increased (see trackDefinitions.ts) so the
+// tracks actually suit a ~152 mph / 1.6g car instead of capping corners at
+// 42-60 mph — see ENGINE_ROADMAP.md's Tuning backlog for the prior numbers.
+export const ROAD_WIDTH = 14; // meters
 export const TRACK_SAMPLE_SPACING = 3; // meters between spline samples along the track
 export const GAS_STATION_MIN_INTERVAL_METERS = 120;
 export const GAS_STATION_MAX_INTERVAL_METERS = 220;
