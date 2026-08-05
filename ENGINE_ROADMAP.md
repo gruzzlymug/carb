@@ -298,7 +298,7 @@ a `window`, so it can't run headless under plain Node without a DOM shim — not
 attempted here, low value relative to the physics coverage above) or `TrackWorld`'s
 mesh-building (rendering-adjacent, out of scope for physics tests).
 
-## 5. Add a proper road/off-road state
+## 5. Add a proper road/off-road state  ✅ DONE
 
 Once `TrackQuery` exists (done), determine whether the car is on-road, shoulder, or
 off-road and apply appropriate grip/drag. The detection + drag-application mechanism is
@@ -308,6 +308,43 @@ backlog) are tuning and can be placeholder values until then.
 **Goal:** make leaving the track meaningful without requiring elaborate terrain.
 
 **Why:** turns the track from scenery into gameplay.
+
+**What was built:**
+- `src/world/surfaceState.ts` (new): `SurfaceState { kind, gripMultiplier, dragMultiplier }`
+  and `classifySurface(distanceFromCenterline)`, three tiers — `road` (within
+  `ROAD_WIDTH/2`), `shoulder` (up to 2m beyond the paved edge), `offRoad` (further out).
+  `ROAD_SURFACE` (multipliers of 1) is exported as the default.
+- `Player.update(dt, controls, surface = ROAD_SURFACE)` gained a third parameter.
+  `surface.gripMultiplier` scales `TIRE_GRIP` in the friction-circle cornering cap;
+  `surface.dragMultiplier` scales `FRICTION` (coast drag) and `BRAKE_FORCE` (regular
+  brake) — off-road/shoulder braking distance grows too, not just cornering. The
+  default parameter means every existing call site (including all prior tests, which
+  call `Player.update` directly in several places) needed zero changes; verified
+  identical behavior with the parameter omitted vs. explicit `ROAD_SURFACE`.
+- `Game.stepPhysics` classifies the surface from `trackQuery.nearestPoint(player.position).distance`
+  once per physics step (mirroring how `ControlState` is sampled once per step) and
+  passes it into `player.update`. `Telemetry.surfaceKind` added (debug panel) for
+  observability of what's actually driving physics grip/drag right now.
+
+**Deliberately left alone:** the handbrake's yaw cap (`HANDBRAKE_MAX_YAW_RATE`) is not
+scaled by surface — handbrake rear-grip rotation is a separately-verified mechanic
+(item 2 pass 4) and touching its interaction with surface state is scoped out of this
+pass. Acceleration/throttle traction is untouched — wheelspin/reduced traction under
+power is a distinct mechanic from the grip/drag covered here.
+
+**Verified (7 new tests in `src/test/surfaceState.test.ts`):** `classifySurface`
+tier boundaries; `Player.update` with the surface argument omitted is bit-identical to
+passing `ROAD_SURFACE` explicitly; off-road cornering grip matches
+`sqrt(max(0, (TIRE_GRIP·gripMultiplier)² − (FRICTION·dragMultiplier)²))` exactly; off-road
+coast drag decelerates harder than on-road.
+
+**Notable finding, not a bug:** with the current placeholder multipliers (`offRoad`:
+grip ×0.45, drag ×2.2), off-road coast friction alone (`FRICTION × 2.2 ≈ 13.2`) already
+consumes nearly the entire reduced grip budget (`TIRE_GRIP × 0.45 = 7.2`) — cornering
+grip while coasting off-road floors at (or very near) zero even with no braking. That's
+a real, if likely too-extreme, consequence of these specific placeholder numbers; the
+Tuning backlog's surface-grip pass should treat this as a concrete data point, not
+re-derive it from scratch.
 
 ## 6. Build gameplay systems on those primitives
 
@@ -342,8 +379,12 @@ pass once items 3-6 above are done, in-browser, with the real telemetry.
 - **Track geometry resize** (item 1's known gap): corner radii and straight lengths
   need the performance envelope above finalized first, then size against
   `minCornerRadius(speed) = speed² / TIRE_GRIP`.
-- **Surface-grip multiplier values** for item 5 (off-road state): road 16 / gravel 10 /
-  grass 7 / ice 2 m/s² are placeholder-plausible, not measured/tuned.
+- **Surface-grip/drag multiplier values** in `world/surfaceState.ts` (item 5, done):
+  `shoulder` grip ×0.7 / drag ×1.3, `offRoad` grip ×0.45 / drag ×2.2 — placeholder, not
+  measured/tuned. Known issue to address in this pass: off-road coast friction alone
+  (`FRICTION × 2.2`) already exceeds the reduced grip budget (`TIRE_GRIP × 0.45`), so
+  cornering grip floors at ~0 off-road even without braking — probably too severe,
+  revisit both numbers together rather than in isolation.
 
 ---
 
@@ -370,5 +411,10 @@ pass once items 3-6 above are done, in-browser, with the real telemetry.
   owns all Three.js concerns; `Player` is Three.js-free and verified headless.
 - 2026-08-04 — Item 4 (automated physics tests) done: Node's built-in test runner,
   `npm test`, 26 tests across acceleration/braking/shifting/steering/handbrake-slide/
-  TrackQuery, all passing. Next: item 5 (road/off-road state) — no tuning until items
-  5-6 are done.
+  TrackQuery, all passing.
+- 2026-08-04 — Item 5 (road/off-road state) done: `SurfaceState`/`classifySurface` in
+  `world/surfaceState.ts`, wired into `Player.update` via a defaulted third parameter
+  (zero changes needed at existing call sites) and `Game.stepPhysics`. 7 new tests, 33
+  total, all passing. Placeholder off-road numbers produce a known-too-severe zero-grip
+  effect while coasting — flagged concretely in the Tuning backlog. Next: item 6
+  (gameplay systems on these primitives) — no tuning until it's done too.

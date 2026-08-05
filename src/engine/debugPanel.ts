@@ -34,6 +34,7 @@ export function createDebugPanel(game: Game, controlsOverlay: ControlsOverlay): 
   telemetryFolder.add(game.telemetry, "lateralOffsetM").name("Lateral Offset (m)").listen().disable();
   telemetryFolder.add(game.telemetry, "trackCurvature").name("Track Curvature (1/m)").listen().disable();
   telemetryFolder.add(game.telemetry, "onRoad").name("On Road").listen().disable();
+  telemetryFolder.add(game.telemetry, "surfaceKind").name("Surface").listen().disable();
   telemetryFolder.open();
 
   const controlsFolder = gui.addFolder("Controls");

@@ -9,6 +9,7 @@ import { Player } from "../entities/player.js";
 import { PlayerView } from "../entities/playerView.js";
 import { buildTrackWorld, type TrackWorld } from "../world/trackWorld.js";
 import type { TrackQuery } from "../world/trackQuery.js";
+import { classifySurface } from "../world/surfaceState.js";
 import { DEFAULT_TRACK_TYPE } from "../world/trackDefinitions.js";
 import { PHYSICS_DT, MAX_FRAME_SECONDS } from "../util/constants.js";
 
@@ -39,6 +40,7 @@ export interface Telemetry {
   lateralOffsetM: number; // signed distance from the nearest centerline; + = left, - = right
   trackCurvature: number; // signed curvature (1/m) of the track at the nearest point
   onRoad: boolean; // whether the car's position falls within the paved road width
+  surfaceKind: string; // "road" / "shoulder" / "offRoad" — what's actually driving physics grip/drag right now
 }
 
 export class Game {
@@ -62,6 +64,7 @@ export class Game {
     lateralOffsetM: 0,
     trackCurvature: 0,
     onRoad: true,
+    surfaceKind: "road",
   };
 
   private readonly input = new Input();
@@ -166,7 +169,8 @@ export class Game {
       this.player.respawn(this.spawn.position, this.spawn.headingRad);
     }
     const controls = readControlState(this.input);
-    this.player.update(dt, controls);
+    const surface = classifySurface(this.trackQuery.nearestPoint(this.player.position).distance);
+    this.player.update(dt, controls, surface);
     this.input.endFrame();
   }
 
@@ -195,5 +199,6 @@ export class Game {
     this.telemetry.lateralOffsetM = Math.round(surface.lateralOffset * 100) / 100;
     this.telemetry.trackCurvature = Math.round(surface.curvature * 1000) / 1000;
     this.telemetry.onRoad = surface.onRoad;
+    this.telemetry.surfaceKind = classifySurface(surface.distance).kind;
   }
 }

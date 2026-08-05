@@ -1,6 +1,8 @@
 import type { Vec3 } from "../math/vector3.js";
 import { angleDelta } from "../math/vector3.js";
 import type { ControlState } from "../engine/controlState.js";
+import type { SurfaceState } from "../world/surfaceState.js";
+import { ROAD_SURFACE } from "../world/surfaceState.js";
 import { transmissionSettings } from "../util/transmissionSettings.js";
 import { rpmForGear, accelerationMultiplierForGear, engineTorqueFraction } from "../util/engineModel.js";
 import {
@@ -150,7 +152,7 @@ export class Player {
   /** Interpolated front-wheel steer angle, radians. Refreshed by updateRenderPose; read by PlayerView. */
   renderWheelSteer = 0;
 
-  update(dt: number, controls: ControlState): void {
+  update(dt: number, controls: ControlState, surface: SurfaceState = ROAD_SURFACE): void {
     // Snapshot the pose before this step mutates it, for render interpolation.
     this.prevPosition.x = this.position.x;
     this.prevPosition.y = this.position.y;
@@ -203,16 +205,23 @@ export class Player {
       const decel = HANDBRAKE_FORCE * dt;
       this.speed = this.speed > 0 ? Math.max(0, this.speed - decel) : Math.min(0, this.speed + decel);
     } else if (brake) {
+      // Off-road/shoulder braking distance grows with surface.dragMultiplier — lower
+      // grip means worse braking, not just worse cornering. Handbrake is unaffected;
+      // it's already a distinct, separately-tuned mechanic (see applySteering).
+      const brakeForce = BRAKE_FORCE * surface.dragMultiplier;
       if (manual) {
         // Plain brake — reverse is only reached by shifting to R.
-        this.speed = this.speed > 0 ? Math.max(0, this.speed - BRAKE_FORCE * dt) : Math.min(0, this.speed + BRAKE_FORCE * dt);
+        this.speed = this.speed > 0 ? Math.max(0, this.speed - brakeForce * dt) : Math.min(0, this.speed + brakeForce * dt);
       } else {
         // Automatic mode keeps the simple "hold brake past zero to back up" shortcut.
-        this.speed -= BRAKE_FORCE * dt;
+        this.speed -= brakeForce * dt;
       }
     } else {
-      this.speed -= Math.sign(this.speed) * FRICTION * dt;
-      if (Math.abs(this.speed) < FRICTION * dt) this.speed = 0;
+      // Coast drag also scales with surface — grass/gravel bleed off speed faster
+      // than smooth pavement even with no brake input.
+      const frictionForce = FRICTION * surface.dragMultiplier;
+      this.speed -= Math.sign(this.speed) * frictionForce * dt;
+      if (Math.abs(this.speed) < frictionForce * dt) this.speed = 0;
     }
     this.speed = Math.max(-MAX_REVERSE_SPEED, Math.min(MAX_SPEED, this.speed));
     // Measured now (not at the end of update()): this is this step's actual
@@ -238,7 +247,7 @@ export class Player {
     // Wheels first: they deflect toward the input (eased), and that deflection
     // — not the raw key — is what steers the car.
     this.updateWheelSteer(dt, steerInput);
-    this.applySteering(dt, longAccel, handbrake);
+    this.applySteering(dt, longAccel, handbrake, surface);
 
     // Along velocityHeading (direction of travel), not heading (nose direction) —
     // normally identical, but they diverge mid-slide (see applySteering).
@@ -352,11 +361,16 @@ export class Player {
    * directly by steering geometry, up to a bounded HANDBRAKE_MAX_YAW_RATE (a
    * stability cap, not a tire limit). That's what lets the nose rotate faster
    * than the car's momentum can follow — see the velocityHeading blend below,
-   * which is the actual slide.
+   * which is the actual slide. (The handbrake cap is not scaled by surface —
+   * left alone this pass; see ENGINE_ROADMAP.md item 5.)
+   *
+   * `surface.gripMultiplier` scales TIRE_GRIP itself, so off-road/shoulder
+   * driving washes out into understeer at a much lower speed than on the
+   * paved surface, same shape of behavior, just less grip to spend.
    *
    * Reverse falls out for free: negative speed flips the yaw sign.
    */
-  private applySteering(dt: number, longAccel: number, handbrake: boolean): void {
+  private applySteering(dt: number, longAccel: number, handbrake: boolean, surface: SurfaceState): void {
     if (this.wheelSteer === 0 || this.speed === 0) {
       this.lastYawRate = 0;
       this.lastLateralAccel = 0;
@@ -371,7 +385,8 @@ export class Player {
     // (maxYaw, friction circle normally; a bounded, much looser cap under
     // handbrake since the rear end has let go). Whichever is smaller wins.
     const desiredYaw = (this.speed / VEHICLE_WHEELBASE) * Math.tan(this.wheelSteer);
-    const availableLateral = Math.sqrt(Math.max(0, TIRE_GRIP * TIRE_GRIP - longAccel * longAccel));
+    const grip = TIRE_GRIP * surface.gripMultiplier;
+    const availableLateral = Math.sqrt(Math.max(0, grip * grip - longAccel * longAccel));
     const maxYaw = handbrake ? HANDBRAKE_MAX_YAW_RATE : availableLateral / Math.max(Math.abs(this.speed), 1);
     const yawRate = Math.max(-maxYaw, Math.min(maxYaw, desiredYaw));
     this.heading += yawRate * dt;
