@@ -346,14 +346,47 @@ a real, if likely too-extreme, consequence of these specific placeholder numbers
 Tuning backlog's surface-grip pass should treat this as a concrete data point, not
 re-derive it from scratch.
 
-## 6. Build gameplay systems on those primitives
+## 6. Build gameplay systems on those primitives  ⏳ IN PROGRESS
 
 Lap/progress tracking → checkpoints → AI opponents → traffic/hazards → race modes.
 
 **Goal:** turn the driving sandbox into an actual game.
 
 **Why:** these should consume the track/vehicle APIs rather than invent their own
-geometry and physics.
+geometry and physics. Each link in this chain is its own isolated pass, same as every
+other item above — this entry tracks progress through the chain rather than being one
+single deliverable.
+
+**Done so far:**
+
+1. **Lap/progress tracking** — `src/gameplay/lapTracker.ts` (new): `LapTracker` watches
+   arc-length progress along one loop (the one the spawn point sits on) via `TrackQuery`
+   — no separate "am I near the line" geometry of its own. A lap completes when
+   arc-length drops by more than half the loop's length in one step: ordinary driving
+   (forward or reverse) never moves arc-length anywhere near that much in a single
+   physics step, so this only fires on an actual seam crossing, and only in the forward
+   direction (a backward crossing jumps arc-length *up* by about the loop length, which
+   this check doesn't treat as a completion — verified explicitly, see tests). Progress
+   on a different loop than the tracked one (e.g. the figure-eight's second loop) simply
+   doesn't advance detection; the lap clock keeps running, nothing resets.
+   - `TrackQuery` gained `loopLength(loopIndex)` (the wrap threshold `LapTracker` needs)
+     — the one small addition to that API this required.
+   - Wired into `Game`: `LapTracker` is (re)built in `setTrackType` alongside
+     `trackQuery`, updated once per physics step in `stepPhysics` (same cadence as
+     `ControlState`/surface classification), and reset on respawn. Lap count/current/best
+     time surfaced in both `Telemetry` (debug panel) and, since this is the first system
+     meant to be visibly playable rather than a diagnostic, a new lap block in the HUD
+     itself (`Hud.updateLap`) — "LAP N  M:SS.d" plus a best-time line underneath the tach.
+   - Verified (8 new tests, `src/test/lapTracker.test.ts`, using the actual sampled
+     track's own coordinates rather than guessed geometry): forward seam-crossing
+     completes a lap; backward seam-crossing does not; small forward steps walking the
+     entire loop's sample set never falsely trigger; `lastLapTime`/`bestLapTime` track
+     correctly across a fast lap followed by a slower one; progress on a different loop
+     doesn't affect the tracked loop's lap count; `reset()` clears everything.
+
+**Next in the chain:** checkpoints (would consume the same arc-length progress, adding
+intermediate split points rather than only start/finish), then AI opponents, traffic/
+hazards, and race modes — not started.
 
 ---
 
@@ -416,5 +449,9 @@ pass once items 3-6 above are done, in-browser, with the real telemetry.
   `world/surfaceState.ts`, wired into `Player.update` via a defaulted third parameter
   (zero changes needed at existing call sites) and `Game.stepPhysics`. 7 new tests, 33
   total, all passing. Placeholder off-road numbers produce a known-too-severe zero-grip
-  effect while coasting — flagged concretely in the Tuning backlog. Next: item 6
-  (gameplay systems on these primitives) — no tuning until it's done too.
+  effect while coasting — flagged concretely in the Tuning backlog.
+- 2026-08-04 — Item 6, first link (lap/progress tracking) done: `LapTracker` consumes
+  `TrackQuery` (which gained `loopLength`), wired into `Game` and the HUD (first
+  player-visible, not just debug-panel, gameplay system). 8 new tests, 41 total, all
+  passing. Next: checkpoints, then AI opponents/traffic/race modes — no tuning until
+  item 6's chain is done.

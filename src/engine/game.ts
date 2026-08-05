@@ -11,6 +11,7 @@ import { buildTrackWorld, type TrackWorld } from "../world/trackWorld.js";
 import type { TrackQuery } from "../world/trackQuery.js";
 import { classifySurface } from "../world/surfaceState.js";
 import { DEFAULT_TRACK_TYPE } from "../world/trackDefinitions.js";
+import { LapTracker } from "../gameplay/lapTracker.js";
 import { PHYSICS_DT, MAX_FRAME_SECONDS } from "../util/constants.js";
 
 /**
@@ -41,6 +42,10 @@ export interface Telemetry {
   trackCurvature: number; // signed curvature (1/m) of the track at the nearest point
   onRoad: boolean; // whether the car's position falls within the paved road width
   surfaceKind: string; // "road" / "shoulder" / "offRoad" — what's actually driving physics grip/drag right now
+  lapCount: number; // fully completed laps
+  currentLapTime: number; // seconds since the current lap started
+  bestLapTime: number | null; // seconds; null until a lap has completed
+  lastLapTime: number | null; // seconds; null until a lap has completed
 }
 
 export class Game {
@@ -65,6 +70,10 @@ export class Game {
     trackCurvature: 0,
     onRoad: true,
     surfaceKind: "road",
+    lapCount: 0,
+    currentLapTime: 0,
+    bestLapTime: null,
+    lastLapTime: null,
   };
 
   private readonly input = new Input();
@@ -83,6 +92,8 @@ export class Game {
   private spawn: TrackWorld["spawn"] = { position: { x: 0, y: 0, z: 0 }, headingRad: 0 };
   /** Always assigned in the constructor via setTrackType before the loop starts. */
   private trackQuery!: TrackQuery;
+  /** Always assigned in the constructor via setTrackType before the loop starts. */
+  private lapTracker!: LapTracker;
 
   constructor(canvas: HTMLCanvasElement) {
     this.renderer = new Renderer(canvas);
@@ -124,6 +135,7 @@ export class Game {
     this.trackView.show(world);
     this.spawn = world.spawn;
     this.trackQuery = world.query;
+    this.lapTracker = new LapTracker(this.trackQuery);
     this.player.respawn(this.spawn.position, this.spawn.headingRad);
   }
 
@@ -167,10 +179,12 @@ export class Game {
   private stepPhysics(dt: number): void {
     if (this.input.wasPressed("r")) {
       this.player.respawn(this.spawn.position, this.spawn.headingRad);
+      this.lapTracker.reset();
     }
     const controls = readControlState(this.input);
     const surface = classifySurface(this.trackQuery.nearestPoint(this.player.position).distance);
     this.player.update(dt, controls, surface);
+    this.lapTracker.update(dt, this.player.position);
     this.input.endFrame();
   }
 
@@ -200,5 +214,12 @@ export class Game {
     this.telemetry.trackCurvature = Math.round(surface.curvature * 1000) / 1000;
     this.telemetry.onRoad = surface.onRoad;
     this.telemetry.surfaceKind = classifySurface(surface.distance).kind;
+
+    const lap = this.lapTracker.state;
+    this.telemetry.lapCount = lap.lapCount;
+    this.telemetry.currentLapTime = Math.round(lap.currentLapTime * 10) / 10;
+    this.telemetry.bestLapTime = lap.bestLapTime === null ? null : Math.round(lap.bestLapTime * 10) / 10;
+    this.telemetry.lastLapTime = lap.lastLapTime === null ? null : Math.round(lap.lastLapTime * 10) / 10;
+    this.hud.updateLap(lap);
   }
 }

@@ -1,4 +1,5 @@
 import { REDLINE_RPM, RECOMMENDED_SHIFT_RPM } from "../util/constants.js";
+import type { LapState } from "../gameplay/lapTracker.js";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 
@@ -45,6 +46,14 @@ function svgEl<K extends keyof SVGElementTagNameMap>(tag: K, attrs: Record<strin
   return el;
 }
 
+/** Formats seconds as M:SS.d (e.g. 83.4 -> "1:23.4"); "--:--.-" for an unset time. */
+function formatLapTime(seconds: number | null): string {
+  if (seconds === null) return "--:--.-";
+  const minutes = Math.floor(seconds / 60);
+  const rest = seconds - minutes * 60;
+  return `${minutes}:${rest.toFixed(1).padStart(4, "0")}`;
+}
+
 /** Plain DOM overlay showing a speedometer, gear indicator, and analog tachometer — not part of the 3D scene. */
 export class Hud {
   private readonly element: HTMLDivElement;
@@ -52,6 +61,7 @@ export class Hud {
   private readonly gearNumberEl: HTMLDivElement;
   private readonly needleEl: SVGLineElement;
   private readonly rpmValueEl: HTMLDivElement;
+  private readonly lapEl: HTMLDivElement;
 
   constructor() {
     this.element = document.createElement("div");
@@ -92,7 +102,11 @@ export class Hud {
     this.rpmValueEl = document.createElement("div");
     this.rpmValueEl.style.cssText = "font-size: 12px; color: #aaa; margin-top: 2px;";
 
-    this.element.append(this.speedEl, gearBlock, dial, this.rpmValueEl);
+    this.lapEl = document.createElement("div");
+    this.lapEl.style.cssText =
+      "font-size: 13px; color: #ddd; margin-top: 8px; padding-top: 6px; border-top: 1px solid rgba(255,255,255,0.15);";
+
+    this.element.append(this.speedEl, gearBlock, dial, this.rpmValueEl, this.lapEl);
     document.body.appendChild(this.element);
   }
 
@@ -165,5 +179,12 @@ export class Hud {
 
     this.rpmValueEl.textContent = `${Math.round(rpm)} RPM${rpm >= RECOMMENDED_SHIFT_RPM ? " — SHIFT!" : ""}`;
     this.rpmValueEl.style.color = rpm >= REDLINE_RPM ? "#ff6b6b" : rpm >= RECOMMENDED_SHIFT_RPM ? "#e0c030" : "#aaa";
+  }
+
+  updateLap(lap: LapState): void {
+    this.lapEl.innerHTML = [
+      `LAP ${lap.lapCount + 1} <span style="color:#8fc7e8;">${formatLapTime(lap.currentLapTime)}</span>`,
+      `<div style="font-size: 11px; color: #999; margin-top: 2px;">BEST ${formatLapTime(lap.bestLapTime)}</div>`,
+    ].join("");
   }
 }

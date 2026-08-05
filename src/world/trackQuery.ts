@@ -40,6 +40,8 @@ export interface TrackSurfaceSample {
 export interface TrackQuery {
   /** Finds the nearest point on any loop's centerline to a world-space position (z ignored). */
   nearestPoint(position: Vec3): TrackSurfaceSample;
+  /** Total arc length (meters) of the given loop — the distance at which its arcLength wraps back to 0. */
+  loopLength(loopIndex: number): number;
 }
 
 function angleOf(v: Vec3): number {
@@ -116,5 +118,11 @@ export function buildTrackQuery(track: SampledTrack): TrackQuery {
     };
   }
 
-  return { nearestPoint };
+  function loopLength(loopIndex: number): number {
+    const loop = loops[loopIndex];
+    if (!loop) throw new Error(`TrackQuery.loopLength: no loop at index ${loopIndex}`);
+    return loop.totalLength;
+  }
+
+  return { nearestPoint, loopLength };
 }
