@@ -182,9 +182,14 @@ export class Hud {
   }
 
   updateLap(lap: LapState): void {
-    this.lapEl.innerHTML = [
+    const lines = [
       `LAP ${lap.lapCount + 1} <span style="color:#8fc7e8;">${formatLapTime(lap.currentLapTime)}</span>`,
       `<div style="font-size: 11px; color: #999; margin-top: 2px;">BEST ${formatLapTime(lap.bestLapTime)}</div>`,
-    ].join("");
+    ];
+    if (lap.splits.length > 0) {
+      const splitsText = lap.splits.map((split, i) => `S${i + 1} ${formatLapTime(split)}`).join("  ");
+      lines.push(`<div style="font-size: 11px; color: #999; margin-top: 2px;">${splitsText}</div>`);
+    }
+    this.lapEl.innerHTML = lines.join("");
   }
 }

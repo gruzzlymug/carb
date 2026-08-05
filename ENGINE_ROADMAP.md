@@ -384,9 +384,32 @@ single deliverable.
      correctly across a fast lap followed by a slower one; progress on a different loop
      doesn't affect the tracked loop's lap count; `reset()` clears everything.
 
-**Next in the chain:** checkpoints (would consume the same arc-length progress, adding
-intermediate split points rather than only start/finish), then AI opponents, traffic/
-hazards, and race modes — not started.
+2. **Checkpoints (sector splits)** — extended `LapTracker` rather than adding a
+   separate class: checkpoints are evenly-spaced arc-length thresholds
+   (`sectorCount - 1` of them, default 3 sectors → 2 checkpoints) crossed the same way
+   the finish line is (forward progress past a threshold, once per lap), so there's one
+   piece of arc-length-progress/wrap logic, not two duplicating each other.
+   `LapState.splits: ReadonlyArray<number | null>` — this lap's checkpoint times so far,
+   `null` until reached, reset to all-`null` the moment a lap completes. Checkpoints are
+   checked *before* the lap-wrap check each `update()`, so a threshold sitting right at
+   the finish line still gets its split recorded before the wrap resets everything.
+   - Surfaced in the HUD: a sector-splits line under the lap/best-time block
+     ("S1 0:12.3  S2 0:24.1").
+   - **Scope explicitly limited to informational splits** — this pass does *not* gate
+     lap validity on having reached every checkpoint (e.g. a reversed-then-forward or
+     short-cut lap still completes and counts). Real anti-cheat/validity gating would be
+     a natural follow-up, not built here.
+   - Verified (4 new tests): splits start all-`null`; crossing each threshold forward
+     records the correct elapsed time, in order; re-visiting an already-crossed
+     checkpoint doesn't re-record it; splits reset to all-`null` exactly when a new lap
+     starts. Built against real sampled track coordinates (`sample.arcLength >= target`,
+     not "nearest sample to target" — nearest can land just short of the threshold and
+     silently fail to trigger the crossing check, which is exactly the bug this test
+     methodology caught in its first draft).
+
+**Next in the chain:** AI opponents, traffic/hazards, and race modes — not started.
+Lap-validity gating on checkpoints (noted above) is also still open, whenever it's
+wanted.
 
 ---
 
@@ -453,5 +476,10 @@ pass once items 3-6 above are done, in-browser, with the real telemetry.
 - 2026-08-04 — Item 6, first link (lap/progress tracking) done: `LapTracker` consumes
   `TrackQuery` (which gained `loopLength`), wired into `Game` and the HUD (first
   player-visible, not just debug-panel, gameplay system). 8 new tests, 41 total, all
-  passing. Next: checkpoints, then AI opponents/traffic/race modes — no tuning until
-  item 6's chain is done.
+  passing.
+- 2026-08-04 — Item 6, second link (checkpoints/sector splits) done: extended
+  `LapTracker` rather than a separate class, reusing its arc-length-progress/wrap logic
+  instead of duplicating it. Splits surfaced in the HUD. 4 new tests, 45 total, all
+  passing — caught a real test-methodology bug (nearest-sample vs. at-or-past-threshold
+  sample) along the way. Next: AI opponents, traffic/hazards, race modes — no tuning
+  until item 6's chain is done.

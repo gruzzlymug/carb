@@ -1,5 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import type { Vec3 } from "../math/vector3.js";
 import { createOvalTrack, createFigureEightTrack } from "../world/trackDefinitions.js";
 import { sampleTrack } from "../world/trackSpline.js";
 import { buildTrackQuery } from "../world/trackQuery.js";
@@ -81,6 +82,63 @@ describe("LapTracker — oval track", () => {
     tracker.update(DT, startPoint); // arcLength = 0
     tracker.update(DT, nearEndPoint); // jump backward across the seam to arcLength ~= totalLength
     assert.equal(tracker.state.lapCount, 0, "a backward seam crossing should not count as a completed lap");
+  });
+});
+
+describe("LapTracker — checkpoints/splits (default 3 sectors -> 2 checkpoints)", () => {
+  const sampledLoop = sampleTrack(createOvalTrack()).loops[0];
+  const query = buildTrackQuery({ loops: [sampledLoop] });
+  const startPoint = sampledLoop.samples[0].center;
+  const nearEndPoint = sampledLoop.samples[sampledLoop.samples.length - 1].center;
+  const totalLength = sampledLoop.totalLength;
+
+  /** First actual sampled point at or past a target arc length — guaranteed to trigger a >= threshold check, unlike "nearest" which can land just short. */
+  function sampleAtOrPast(arcLength: number): Vec3 {
+    const sample = sampledLoop.samples.find((s) => s.arcLength >= arcLength);
+    if (!sample) throw new Error(`no sample at or past arcLength ${arcLength}`);
+    return sample.center;
+  }
+
+  const checkpoint1Point = sampleAtOrPast(totalLength / 3);
+  const checkpoint2Point = sampleAtOrPast((2 * totalLength) / 3);
+
+  it("starts with all splits null", () => {
+    const tracker = new LapTracker(query);
+    tracker.update(DT, startPoint);
+    assert.deepEqual(tracker.state.splits, [null, null]);
+  });
+
+  it("records a split when crossing each checkpoint forward, in order", () => {
+    const tracker = new LapTracker(query);
+    tracker.update(DT, startPoint);
+    tracker.update(3, checkpoint1Point);
+    const afterFirst = tracker.state.splits;
+    assert.ok(afterFirst[0] !== null && afterFirst[0] > 2.9);
+    assert.equal(afterFirst[1], null);
+
+    tracker.update(3, checkpoint2Point);
+    const afterSecond = tracker.state.splits;
+    assert.ok(afterSecond[1] !== null && afterSecond[1] > (afterFirst[0] as number));
+  });
+
+  it("does not re-record a split once already reached", () => {
+    const tracker = new LapTracker(query);
+    tracker.update(DT, startPoint);
+    tracker.update(3, checkpoint1Point);
+    const first = tracker.state.splits[0];
+    tracker.update(1, checkpoint1Point);
+    assert.equal(tracker.state.splits[0], first);
+  });
+
+  it("resets splits to null when a new lap starts", () => {
+    const tracker = new LapTracker(query);
+    tracker.update(DT, startPoint);
+    tracker.update(3, checkpoint1Point);
+    tracker.update(3, checkpoint2Point);
+    assert.ok(tracker.state.splits.every((s) => s !== null));
+    tracker.update(3, nearEndPoint);
+    tracker.update(DT, startPoint); // completes the lap
+    assert.deepEqual(tracker.state.splits, [null, null]);
   });
 });
 
