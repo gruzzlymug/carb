@@ -43,7 +43,7 @@ export function createDebugPanel(game: Game, controlsOverlay: ControlsOverlay): 
   controlsFolder
     .add(transmissionSettings, "mode", { Automatic: "automatic", Manual: "manual" })
     .name("Transmission");
-  const displayState = { showOverlay: true, engineSound: true };
+  const displayState = { showOverlay: true, engineSound: true, aiDriver: false };
   controlsFolder
     .add(displayState, "showOverlay")
     .name("Show Controls")
@@ -52,6 +52,10 @@ export function createDebugPanel(game: Game, controlsOverlay: ControlsOverlay): 
     .add(displayState, "engineSound")
     .name("Engine Sound")
     .onChange((enabled: boolean) => game.setEngineSoundEnabled(enabled));
+  controlsFolder
+    .add(displayState, "aiDriver")
+    .name("AI Driver")
+    .onChange((enabled: boolean) => game.setAiDriverEnabled(enabled));
   controlsFolder.open();
 
   const trackFolder = gui.addFolder("Track");

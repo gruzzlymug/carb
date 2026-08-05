@@ -12,6 +12,7 @@ import type { TrackQuery } from "../world/trackQuery.js";
 import { classifySurface } from "../world/surfaceState.js";
 import { DEFAULT_TRACK_TYPE } from "../world/trackDefinitions.js";
 import { LapTracker } from "../gameplay/lapTracker.js";
+import { AiDriver } from "../gameplay/aiDriver.js";
 import { PHYSICS_DT, MAX_FRAME_SECONDS } from "../util/constants.js";
 
 /**
@@ -83,6 +84,8 @@ export class Game {
   private readonly playerView = new PlayerView();
   private readonly hud = new Hud();
   private readonly engineSound = new EngineSound();
+  private readonly aiDriver = new AiDriver();
+  private aiDriverEnabled = false;
   private cameraController: CameraController;
   private lastTimestamp: number | null = null;
   private accumulator = 0; // unspent real time carried between frames, fed to fixed-step physics
@@ -119,6 +122,11 @@ export class Game {
   /** Mutes/unmutes the engine sound, e.g. from the debug panel. */
   setEngineSoundEnabled(enabled: boolean): void {
     this.engineSound.setEnabled(enabled);
+  }
+
+  /** Switches between keyboard input and the autopilot driving the same car, e.g. from the debug panel. */
+  setAiDriverEnabled(enabled: boolean): void {
+    this.aiDriverEnabled = enabled;
   }
 
   /** Swaps the active camera controller, e.g. from the debug panel. */
@@ -181,7 +189,9 @@ export class Game {
       this.player.respawn(this.spawn.position, this.spawn.headingRad);
       this.lapTracker.reset();
     }
-    const controls = readControlState(this.input);
+    const controls = this.aiDriverEnabled
+      ? this.aiDriver.computeControls(this.player, this.trackQuery)
+      : readControlState(this.input);
     const surface = classifySurface(this.trackQuery.nearestPoint(this.player.position).distance);
     this.player.update(dt, controls, surface);
     this.lapTracker.update(dt, this.player.position);

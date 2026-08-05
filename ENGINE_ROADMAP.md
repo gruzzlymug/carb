@@ -407,8 +407,41 @@ single deliverable.
      silently fail to trigger the crossing check, which is exactly the bug this test
      methodology caught in its first draft).
 
-**Next in the chain:** AI opponents, traffic/hazards, and race modes — not started.
-Lap-validity gating on checkpoints (noted above) is also still open, whenever it's
+3. **Autopilot for the existing car** — not the roadmap's "AI opponents" (a second,
+   separate car); this is a toggleable AI that drives the *same* car, confirmed with the
+   user before building. Immediate motivation: a way to auto-lap the Pass 2 track
+   redesign and sanity-check it without driving every lap by hand.
+   - `src/gameplay/aiDriver.ts` (new): `AiDriver.computeControls(player, trackQuery)`
+     produces one `ControlState` per physics step — same contract/seam as
+     `readControlState(input)`, swapped in `Game.stepPhysics` behind a debug-panel
+     checkbox (`setAiDriverEnabled`). Steering and braking both approximate a "point
+     on the track ahead" the same way (walk forward along the current tangent, re-query
+     `TrackQuery.nearestPoint` on that projection to snap to the real curve) — no new
+     `TrackQuery` API needed.
+   - **Steering** uses one short, fixed lookahead (~15m) — just "which way does the road
+     go next." **Braking** samples several points out to a lookahead that scales with the
+     car's own speed (`speed × 2.5s`, minimum 20m), taking the tightest curvature found —
+     a fixed lookahead is nowhere near enough warning across this car's actual speed
+     range (standstill to ~152 mph): the first version used one fixed 18m lookahead for
+     both and the AI braked far too late for the Circuit's tight compound corner (missed
+     a ~55mph corner while still doing ~96mph with only 18m of warning, needed 30m+),
+     ending up 90% off-road for the lap. Speed-scaling the braking lookahead fixed it to
+     0% off-road. Samples resolving to a different loop (relevant on the figure-eight,
+     where two loops pass close together) are discarded rather than allowed to distort
+     the target.
+   - Relies entirely on the existing automatic transmission and never uses the
+     handbrake; known limitation, not worked around: if transmission mode is set to
+     Manual while the autopilot drives, the car never shifts.
+   - Verified (`src/test/aiDriver.test.ts`, 2 new tests, 47 total): drives a headless
+     `Player` with real `AiDriver` output around the actual Circuit and figure-eight,
+     watched by a real `LapTracker` — completes a lap of each with 0% time off-road (not
+     just under a threshold — genuinely clean). Direct measurement outside the test
+     suite: full laps in 35.4s (Circuit, ~98 mph top speed), 28.7s (oval, ~104 mph),
+     17.6s (figure-eight loop, ~73 mph) — sensible relative to each track's character.
+     This test doubles as an automated sanity check of the Pass 2 track geometry itself.
+
+**Next in the chain:** a second, separate AI opponent car, traffic/hazards, and race
+modes — not started. Lap-validity gating on checkpoints (noted above) is also still open, whenever it's
 wanted.
 
 ---
@@ -525,5 +558,11 @@ pass once items 3-6 above are done, in-browser, with the real telemetry.
   `LapTracker` rather than a separate class, reusing its arc-length-progress/wrap logic
   instead of duplicating it. Splits surfaced in the HUD. 4 new tests, 45 total, all
   passing — caught a real test-methodology bug (nearest-sample vs. at-or-past-threshold
-  sample) along the way. Next: AI opponents, traffic/hazards, race modes — no tuning
-  until item 6's chain is done.
+  sample) along the way.
+- 2026-08-04 — Item 6, autopilot for the existing car done (user-confirmed scope: same
+  car, not a second opponent). Speed-scaled braking lookahead was the key fix — a fixed
+  lookahead braked too late at high speed and put the AI 90% off-road; scaling it with
+  the car's own speed fixed it to 0% off-road on all three tracks. Doubles as an
+  automated sanity check that the Pass 2 track redesign is actually drivable. 2 new
+  tests, 47 total, all passing. Next: a second AI opponent car, traffic/hazards, race
+  modes — no tuning until item 6's chain is done.
