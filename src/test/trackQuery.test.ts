@@ -9,7 +9,12 @@ import { buildTrackQuery } from "../world/trackQuery.js";
 // without just re-deriving the generator, so keep these in sync by hand.
 const OVAL_RADIUS = 60;
 const OVAL_HALF_STRAIGHT = 110;
-const FIGURE_EIGHT_RADIUS = 65;
+// Loop A (fast sweeper) is still a circle; loop B (technical loop) is a small
+// rounded rectangle with independent corner radii, not a circle — these two
+// query points just need to land unambiguously inside each loop's own
+// footprint, not on any particular named feature.
+const FIGURE_EIGHT_LOOP_A_CENTER = { x: -80, y: 0 };
+const FIGURE_EIGHT_LOOP_B_INTERIOR = { x: 75, y: 0 };
 
 describe("TrackQuery — oval track", () => {
   const query = buildTrackQuery(sampleTrack(createOvalTrack()));
@@ -42,8 +47,8 @@ describe("TrackQuery — figure-eight (two independent loops)", () => {
   const query = buildTrackQuery(sampleTrack(createFigureEightTrack()));
 
   it("resolves loopIndex independently for each loop", () => {
-    const leftLoop = query.nearestPoint({ x: -FIGURE_EIGHT_RADIUS, y: 0, z: 0 }); // left circle's own center
-    const rightLoop = query.nearestPoint({ x: FIGURE_EIGHT_RADIUS, y: 0, z: 0 }); // right circle's own center
+    const leftLoop = query.nearestPoint({ ...FIGURE_EIGHT_LOOP_A_CENTER, z: 0 });
+    const rightLoop = query.nearestPoint({ ...FIGURE_EIGHT_LOOP_B_INTERIOR, z: 0 });
     assert.equal(leftLoop.loopIndex, 0);
     assert.equal(rightLoop.loopIndex, 1);
   });

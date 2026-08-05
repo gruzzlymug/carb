@@ -445,11 +445,40 @@ pass once items 3-6 above are done, in-browser, with the real telemetry.
   the left/right straights collapse to zero length — it's now geometrically a stadium
   (long top/bottom straights, semicircular ends), not 4 distinct corners. That's a
   direct consequence of the requested numbers, not a bug; worth knowing before judging
-  the shape in-browser. **Not done:** the "don't make every corner the same" redesign
-  (sweepers, opening-radius corners, S-curves, varied hairpin-vs-sweeper mix) — explicitly
-  flagged as Pass 2+, only worth doing after driving Pass 1. Still open:
-  `minCornerRadius(speed) = speed² / TIRE_GRIP` as the formal sizing formula once a
-  performance envelope is actually finalized.
+  the shape in-browser. **Pass 2 done** (user confirmed Pass 1 felt right, and explicitly
+  wanted the oval left alone as the "just go fast" baseline track): the rounded-rectangle
+  and figure-eight's technical loop now each have four *distinct* corners instead of one
+  radius repeated. Oval untouched.
+  - Rounded rectangle → renamed **"Circuit"**: sweeper (r=95, ~87 mph), medium (r=65,
+    ~72 mph), tight (r=45, ~60 mph, not a hairpin), and a genuine compound "tight-in,
+    opening-out" corner (two tangent-joined arcs, r=38 entering → r=80 exiting — verified
+    numerically that curvature actually tightens then opens through the corner, and that
+    the two arcs' join point matches to 6 decimal places). Straights: 222m (start/finish),
+    168m, 129m (braking zone into the tight corner), 84m (short link out of the opening
+    corner into the sweeper). Total lap 1005m.
+  - Figure-eight's loop A (fast sweeper) resized (65→80m) but otherwise left alone —
+    same "keep it simple, it's the fast one" logic as the oval. Loop B rebuilt as its own
+    small rounded rectangle with four different corner radii (40/45/50/55m) instead of a
+    plain circle — a genuinely more technical loop, still crossing loop A at the shared
+    origin point with the same tangent relationship as before.
+  - The reusable technique for both: `arcPoints()`'s tangent at angle θ is
+    `(−sinθ, cosθ)` — independent of radius — so any two arcs sharing a join angle
+    automatically share a tangent there (no kink), with the second circle's center offset
+    from the first along the join-angle radius direction by `(r1 − r2)`. This is what
+    makes the compound corner (same direction, changing radius) simple to build with the
+    existing `arcPoints()`, no new spline machinery. A small `pointOnCircle()` and
+    `midpoint()` helper were added alongside it for single-point anchors.
+  - Verified numerically (dist-backed, same technique as every pass this session): both
+    tracks' loops close cleanly (gap ≈ one sample spacing, ~3m — expected, not an error);
+    every corner's curvature matches its target radius within ~2%; the compound corner's
+    two arcs meet at literally the same point (0.000000m gap). One test
+    (`trackQuery.test.ts`'s figure-eight `loopIndex` check) had to move off the old
+    "circle center" query points since loop B isn't a circle anymore — now queries a
+    point unambiguously inside each loop's actual footprint instead.
+  - Still open: `minCornerRadius(speed) = speed² / TIRE_GRIP` as the formal sizing
+    formula, once a performance envelope is actually finalized (this pass used the car's
+    *current*, not-yet-finalized numbers as a practical stand-in, per explicit user
+    direction). Variable per-segment road width (noted, explicitly deferred by the user).
 - **Surface-grip/drag multiplier values** in `world/surfaceState.ts` (item 5, done):
   `shoulder` grip ×0.7 / drag ×1.3, `offRoad` grip ×0.45 / drag ×2.2 — placeholder, not
   measured/tuned. Known issue to address in this pass: off-road coast friction alone
