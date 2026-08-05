@@ -6,6 +6,7 @@ import { Hud } from "./hud.js";
 import { EngineSound } from "./engineSound.js";
 import { CAMERA_TYPES, DEFAULT_CAMERA_TYPE, type CameraController } from "./cameras/index.js";
 import { Player } from "../entities/player.js";
+import { PlayerView } from "../entities/playerView.js";
 import { buildTrackWorld, type TrackWorld } from "../world/trackWorld.js";
 import type { TrackQuery } from "../world/trackQuery.js";
 import { DEFAULT_TRACK_TYPE } from "../world/trackDefinitions.js";
@@ -67,6 +68,7 @@ export class Game {
   private readonly renderer: Renderer;
   private readonly trackView: TrackView;
   private readonly player = new Player();
+  private readonly playerView = new PlayerView();
   private readonly hud = new Hud();
   private readonly engineSound = new EngineSound();
   private cameraController: CameraController;
@@ -82,7 +84,7 @@ export class Game {
   constructor(canvas: HTMLCanvasElement) {
     this.renderer = new Renderer(canvas);
     this.trackView = new TrackView(this.renderer.scene);
-    this.renderer.scene.add(this.player.object3D);
+    this.renderer.scene.add(this.playerView.object3D);
 
     this.cameraController = CAMERA_TYPES[DEFAULT_CAMERA_TYPE]();
     window.addEventListener("resize", this.handleResize);
@@ -149,7 +151,8 @@ export class Game {
     // Render the pose interpolated between the last two physics states, so
     // motion is smooth even when the render rate differs from the physics rate.
     const alpha = this.accumulator / PHYSICS_DT;
-    this.player.syncVisuals(alpha);
+    this.player.updateRenderPose(alpha);
+    this.playerView.sync(this.player);
     this.cameraController.update(this.player.renderPosition);
     this.presentFrame();
     this.renderer.render(this.cameraController.camera);

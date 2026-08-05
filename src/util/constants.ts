@@ -3,7 +3,7 @@
 // Simulation timing. Physics runs at a fixed timestep, decoupled from the
 // (variable) render rate: each animation frame the loop accumulates real time
 // and runs as many fixed PHYSICS_DT steps as have elapsed, then renders an
-// interpolated pose (see engine/game.ts, Player.syncVisuals). Fixed dt keeps
+// interpolated pose (see engine/game.ts, Player.updateRenderPose). Fixed dt keeps
 // the explicit integration (heading/position) consistent regardless of display
 // FPS and is the stable base for future friction-circle / handbrake dynamics.
 export const PHYSICS_HZ = 120; // physics updates per second

@@ -27,12 +27,14 @@ binding unless a later note says otherwise):
 ## Dependency order
 
 ```
-TrackQuery → vehicle dynamics → performance tuning → deterministic telemetry/tests → off-road → racing/gameplay
+TrackQuery → vehicle dynamics (structural) → sim/presentation split → automated tests → off-road → racing/gameplay
 ```
 
-Each arrow is a hard dependency: don't start an item until the one before it is done and
-measured. ("Separate simulation from presentation further" is not on this chain — it's
-useful but doesn't block anything; pick it up opportunistically.)
+Feature/architecture work now takes priority over feel-tuning: numeric tuning items
+(performance envelope, remaining steering/grip feel passes, track-geometry resize) are
+set aside in the **Tuning backlog** at the end of this doc and picked up after the
+feature-work items above are done, not interleaved with them. Each arrow above is a
+hard dependency: don't start an item until the one before it is done and measured.
 
 ---
 
@@ -110,9 +112,9 @@ Left alone: `trackSpline.ts`/`trackDefinitions.ts` geometry generation untouched
 `TrackWorld`'s mesh/gameplay-data mixing (noted in the `ControlState` pass) still
 stands — future work, not addressed here.
 
-**Known gap surfaced but not yet scheduled (see item 3):** the three hand-authored
-tracks (rounded rectangle, oval, figure-eight) were sized for a much slower car and
-don't match the current 152 mph / 1.6g envelope:
+**Known gap surfaced but not yet scheduled (see Tuning backlog):** the three
+hand-authored tracks (rounded rectangle, oval, figure-eight) were sized for a much
+slower car and don't match the current 152 mph / 1.6g envelope:
 - Corner radii are far too tight: max grip-limited corner speed = `sqrt(radius × TIRE_GRIP)`
   → rounded-rect (22m) ~42 mph, oval (35m) ~53 mph, figure-eight (45m) ~60 mph. Above
   those the car understeers off.
@@ -120,10 +122,10 @@ don't match the current 152 mph / 1.6g envelope:
   ~180m; reaching 150+ mph needs ~600–900m.
 - `ROAD_WIDTH = 10m` leaves little margin once understeering at speed.
 
-This is track **content** work, not a TrackQuery API gap, and it's blocked on item 3
-(the performance envelope needs to be final before track geometry is sized against it)
-— revisit after item 3, using `minCornerRadius(speed) = speed² / TIRE_GRIP` as the
-design formula (targets: 100 mph → 125m, 130 mph → 211m, 150 mph → 281m radius).
+This is track **content** work, not a TrackQuery API gap, and it's tuning-adjacent —
+it can't be sized correctly until the performance envelope (Tuning backlog) is final.
+Design formula for later: `minCornerRadius(speed) = speed² / TIRE_GRIP` (targets:
+100 mph → 125m, 130 mph → 211m, 150 mph → 281m radius).
 
 ## 2. Fix/upgrade the vehicle dynamics model  ⏳ IN PROGRESS
 
@@ -204,36 +206,13 @@ eventually limit driving feel more than graphics or engine architecture.
    - `angleDelta` (smallest signed angle) extracted from `trackQuery.ts` into
      `math/vector3.ts` as a shared util, now used by both.
 
-**Next (in order):**
-- Speed-dependent steering sensitivity (e.g. 40°@≤40mph → 20°@150mph) — noted as a
-  candidate, not started.
-- Weight-transfer feel (more front grip under braking, more rear grip under throttle)
-  — natural next step, uses the same "load affects grip" reasoning as both the
-  friction circle and the handbrake rear-grip split.
-- Surface-grip multiplier (road 16 / gravel 10 / grass 7 / ice 2 m/s²) — belongs with
-  item 6 (off-road state), not this item; noted here since it uses the same `TIRE_GRIP`
-  knob.
-- `TIRE_GRIP` tuning itself — only after the above and after in-browser feel testing;
-  the diagnosis so far is that "overshooting turns" is a speed/track mismatch (item 1's
-  track-sizing gap), not a steering bug — don't fix it by inflating `TIRE_GRIP`.
+Remaining feel-tuning candidates for this item (speed-dependent steering sensitivity,
+weight-transfer feel, `TIRE_GRIP` tuning) are moved to the **Tuning backlog** at the end
+of this doc — the structural capability (friction circle, handbrake slip state) is done;
+what's left is refinement, not new capability, so it waits until the feature-work items
+below are done.
 
-## 3. Make speed/acceleration performance intentional
-
-Revisit `ACCELERATION`, gear multipliers, torque curve, drag/top-speed falloff, and shift
-points as one system.
-
-**Goal:** a deliberate target for 0–60, 0–100, top speed, and acceleration through each
-gear.
-
-**Why:** stop tuning individual constants reactively — define the performance envelope
-first, then tune the powertrain against it. (Current baseline, not yet treated as a
-deliberate target: `ACCELERATION = 8` gives full-throttle 0→60 mph ≈2.9s, 0→100 ≈5.8s,
-0→130 ≈8.2s, 0→150 ≈12.6s; top speed ≈152 mph in 5th.)
-
-**Blocks:** item 1's track-geometry redesign (corner radii/straight lengths need a
-final envelope to size against) and, indirectly, item 6's surface-grip multipliers.
-
-## 4. Separate simulation from presentation further
+## 3. Separate simulation from presentation further  ✅ DONE
 
 Keep `Player` as vehicle state/physics and progressively remove Three.js/render concerns
 from it (constructor mesh setup, `syncVisuals`).
@@ -241,14 +220,35 @@ from it (constructor mesh setup, `syncVisuals`).
 **Goal:** make vehicle simulation independently testable and reusable.
 
 **Why:** `ControlState` (done) is the first good boundary; the next valuable one is
-`VehicleState`/`VehicleSimulation` → renderer. Not on the critical dependency path —
-useful, but doesn't block anything; pick it up opportunistically rather than blocking
-the physics-facing items on it. (A prior pass considered fully splitting `Player` into
-`PlayerPhysics`/`PlayerPresentation` for headless A/B testing; deferred as not yet
-needed since dist-backed sim scripts reimplementing/driving the compiled step have been
-adequate so far.)
+`VehicleState`/`VehicleSimulation` → renderer.
 
-## 5. Build automated physics telemetry/tests
+**What was built:**
+- `src/entities/playerView.ts` (new): `PlayerView` owns `object3D`, the wheel meshes,
+  and construction (`createCar`/`createWheel`/`WHEEL_OFFSETS`) — everything `Player`'s
+  constructor used to do. `PlayerView.sync(player)` reads `player.renderPosition` /
+  `renderHeading` / `renderWheelSteer` and writes the Three.js transform; that's its
+  only job.
+- `Player` lost its `THREE` import entirely, along with `object3D`, `frontWheels`, and
+  its constructor (nothing left for it to do). `syncVisuals(alpha)` renamed
+  `updateRenderPose(alpha)`: same interpolation math, but now only writes plain-data
+  fields (`renderPosition`, plus new `renderHeading`/`renderWheelSteer`) — zero
+  rendering calls. `Game.tick` now calls `player.updateRenderPose(alpha)` then
+  `playerView.sync(player)` as two steps where `player.syncVisuals(alpha)` used to be
+  one; `Game` also now constructs and scene-adds a `playerView` alongside `player`.
+- No behavior change: same interpolation math, same call ordering relative to the
+  physics accumulator loop, same camera-follows-`renderPosition` contract.
+
+**Verified:** build clean; confirmed headless — `new Player()` + `.update(...)` runs
+correctly with zero `three` package involvement at all (checked the compiled output has
+no `three` import, and that `object3D`/`frontWheels` no longer exist on the instance).
+This is what "independently testable and reusable" concretely means: `Player` can now
+be constructed and driven in a plain Node script (already the pattern used to verify
+every physics pass above) without pulling in Three.js, a DOM, or a `PlayerView` at all.
+
+Left alone: the debug panel binds to `Game.telemetry`/`Player` getters, all unchanged;
+transmission/steering/handbrake physics untouched, only the presentation boundary moved.
+
+## 4. Build automated physics telemetry/tests
 
 Deterministic simulation tests for acceleration, braking, shifting, top speed, steering
 radius, grip limits, and control transitions.
@@ -261,16 +261,18 @@ repeatable tests before more tuning makes the model harder to reason about. This
 currently has no test framework — first sub-step is picking a minimal one, or continuing
 the existing dist-backed-sim-script approach if that's preferred.
 
-## 6. Add a proper road/off-road state
+## 5. Add a proper road/off-road state
 
-Once `TrackQuery` exists, determine whether the car is on-road, shoulder, or off-road and
-apply appropriate grip/drag (surface-grip multiplier noted under item 2).
+Once `TrackQuery` exists (done), determine whether the car is on-road, shoulder, or
+off-road and apply appropriate grip/drag. The detection + drag-application mechanism is
+feature work and can be built now; the actual per-surface grip *numbers* (Tuning
+backlog) are tuning and can be placeholder values until then.
 
 **Goal:** make leaving the track meaningful without requiring elaborate terrain.
 
 **Why:** turns the track from scenery into gameplay.
 
-## 7. Build gameplay systems on those primitives
+## 6. Build gameplay systems on those primitives
 
 Lap/progress tracking → checkpoints → AI opponents → traffic/hazards → race modes.
 
@@ -278,6 +280,33 @@ Lap/progress tracking → checkpoints → AI opponents → traffic/hazards → r
 
 **Why:** these should consume the track/vehicle APIs rather than invent their own
 geometry and physics.
+
+---
+
+## Tuning backlog (deferred until the feature-work items above are done)
+
+Numeric/feel tuning, set aside so feature work isn't interleaved with it. Revisit as one
+pass once items 3-6 above are done, in-browser, with the real telemetry.
+
+- **Speed-dependent steering sensitivity** (e.g. 40°@≤40mph → 20°@150mph) — item 2
+  candidate, not started.
+- **Weight-transfer feel** (more front grip under braking, more rear grip under
+  throttle) — item 2 candidate, uses the same "load affects grip" reasoning as the
+  friction circle and handbrake rear-grip split.
+- **`TIRE_GRIP` tuning** — only after in-browser feel testing with the above; the
+  diagnosis so far is that "overshooting turns" is a speed/track mismatch (see track
+  geometry below), not a steering bug — don't fix it by inflating `TIRE_GRIP`.
+- **Performance envelope** (was item 3): revisit `ACCELERATION`, gear multipliers,
+  torque curve, drag/top-speed falloff, and shift points as one system, against a
+  deliberate target for 0–60, 0–100, top speed, and acceleration through each gear —
+  instead of tuning individual constants reactively. Current baseline, not yet treated
+  as a deliberate target: `ACCELERATION = 8` gives full-throttle 0→60 mph ≈2.9s,
+  0→100 ≈5.8s, 0→130 ≈8.2s, 0→150 ≈12.6s; top speed ≈152 mph in 5th.
+- **Track geometry resize** (item 1's known gap): corner radii and straight lengths
+  need the performance envelope above finalized first, then size against
+  `minCornerRadius(speed) = speed² / TIRE_GRIP`.
+- **Surface-grip multiplier values** for item 5 (off-road state): road 16 / gravel 10 /
+  grass 7 / ice 2 m/s² are placeholder-plausible, not measured/tuned.
 
 ---
 
@@ -292,5 +321,14 @@ geometry and physics.
   track-sizing findings → item 1's known-gap note, blocked on item 3.
 - 2026-08-04 — Item 2, handbrake rear-grip rotation (slip/drift state) done and
   verified — zero regression to normal cornering (confirmed numerically), genuine
-  recoverable slide under handbrake. Next: item 2's weight-transfer/steering-sensitivity
-  candidates, or move to item 3 (performance envelope) if those need more design time.
+  recoverable slide under handbrake.
+- 2026-08-04 — HUD moved to top-left, gear numeral enlarged, tach made analog (see
+  below — this is a presentation change, not on this doc's numbered list, but done
+  now per direct request).
+- 2026-08-04 — Reordered: numeric/feel tuning (remaining item 2 candidates, the old
+  item 3 performance envelope, track-geometry resize, off-road surface-grip values)
+  moved to a new Tuning backlog section at the end, to be done as one pass after
+  feature work, not interleaved with it. Renumbered items 4-7 → 4-6.
+- 2026-08-04 — Item 3 (separate simulation from presentation) done: `PlayerView` now
+  owns all Three.js concerns; `Player` is Three.js-free and verified headless. Next:
+  item 4 (automated physics tests) — no tuning until items 4-6 are done.

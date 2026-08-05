@@ -1,10 +1,6 @@
-import * as THREE from "three";
 import type { Vec3 } from "../math/vector3.js";
 import { angleDelta } from "../math/vector3.js";
 import type { ControlState } from "../engine/controlState.js";
-import { createCar, createWheel, WHEEL_OFFSETS } from "../graphics/procedural.js";
-import { createMeshObject } from "../graphics/toThreeGeometry.js";
-import { toThreeVector3 } from "../graphics/coordinates.js";
 import { transmissionSettings } from "../util/transmissionSettings.js";
 import { rpmForGear, accelerationMultiplierForGear, engineTorqueFraction } from "../util/engineModel.js";
 import {
@@ -41,9 +37,6 @@ import {
   AUTOMATIC_KICKDOWN_MIN_GAIN,
   AUTOMATIC_MAX_DOWNSHIFT_RPM,
 } from "../util/constants.js";
-
-const CAR_BODY_MESH = createCar();
-const WHEEL_MESH = createWheel();
 
 /** How rapidly RPM free-revs in Neutral (no road speed to derive it from). */
 const NEUTRAL_REV_RATE_UP = 6000; // RPM/second, throttle held
@@ -113,10 +106,11 @@ function automaticGearFor(currentGear: number, speed: number, throttle: boolean,
  * the normal limiter bounce — the "BRAAAP." Brake is a plain brake in
  * this mode; reverse is only reached via Q.
  *
- * Wheels are separate objects (their own mesh, their own Object3D) but
- * are added as children of object3D at fixed local offsets, so the
- * scene graph handles rotating/translating them with the car body for
- * free — no manual per-wheel offset rotation needed.
+ * Pure vehicle state/physics — no Three.js or any other rendering concern.
+ * `entities/playerView.ts` owns the meshes and reads this class's public
+ * pose (renderPosition/renderHeading/renderWheelSteer, refreshed once per
+ * render frame by updateRenderPose) to draw the car; this class never
+ * touches a scene graph, so it can be constructed and driven headless.
  */
 export class Player {
   position: Vec3 = { x: 0, y: 0, z: 0 };
@@ -135,7 +129,6 @@ export class Player {
   private downshiftSettleRemaining = 0; // seconds remaining in the post-downshift RPM overshoot window
   private shiftBlendRemaining = 0; // seconds remaining easing displayed RPM down after an upshift
   private shiftTorqueCutRemaining = 0; // seconds remaining in the post-upshift torque interruption
-  private readonly frontWheels: THREE.Mesh[] = []; // steerable front wheels (rear wheels stay fixed)
   private wheelSteer = 0; // current front-wheel yaw in radians, eased toward the steer target
   // Per-frame telemetry snapshots (read via getters for the debug panel).
   private lastLongAccel = 0; // longitudinal acceleration, m/s^2 (negative under braking)
@@ -146,27 +139,16 @@ export class Player {
   private lastTurnRadius = Infinity; // |speed / yawRate|, meters (Infinity when going straight)
   // Fixed-step render interpolation: the pose at the START of the current
   // physics step, so a variable-rate render loop can blend toward the new pose
-  // (see syncVisuals) and stay smooth even when physics runs at a different Hz.
+  // (see updateRenderPose) and stay smooth even when physics runs at a different Hz.
   private readonly prevPosition: Vec3 = { x: 0, y: 0, z: 0 };
   private prevHeading = 0;
   private prevWheelSteer = 0;
-  /** Interpolated render-space position, updated by syncVisuals — the camera follows this (not the raw physics position) so it stays smooth. */
+  /** Interpolated render-space position — the camera follows this (not the raw physics position) so it stays smooth. Refreshed by updateRenderPose. */
   readonly renderPosition: Vec3 = { x: 0, y: 0, z: 0 };
-
-  readonly object3D = new THREE.Group();
-
-  constructor() {
-    this.object3D.add(createMeshObject(CAR_BODY_MESH));
-
-    for (const offset of WHEEL_OFFSETS) {
-      const wheel = createMeshObject(WHEEL_MESH);
-      wheel.position.copy(toThreeVector3(offset));
-      this.object3D.add(wheel);
-      // Front wheels sit ahead of the car's center (+Y forward); keep refs
-      // so update() can yaw them with the steering. Rears stay fixed.
-      if (offset.y > 0) this.frontWheels.push(wheel);
-    }
-  }
+  /** Interpolated nose heading, radians. Refreshed by updateRenderPose; read by PlayerView. */
+  renderHeading = 0;
+  /** Interpolated front-wheel steer angle, radians. Refreshed by updateRenderPose; read by PlayerView. */
+  renderWheelSteer = 0;
 
   update(dt: number, controls: ControlState): void {
     // Snapshot the pose before this step mutates it, for render interpolation.
@@ -529,29 +511,23 @@ export class Player {
     this.prevPosition.z = this.position.z;
     this.prevHeading = this.heading;
     this.prevWheelSteer = this.wheelSteer;
-    this.syncVisuals(1);
+    this.updateRenderPose(1);
   }
 
   /**
-   * Applies the visual transform at interpolation factor `alpha` (0..1) between
-   * the previous and current physics poses, so a variable-rate render loop
-   * stays smooth over fixed-step physics. Also publishes renderPosition (our
-   * coordinate space) for the camera to follow. Heading/steer use plain lerp —
-   * consecutive physics poses differ by at most one small step, so there's no
-   * angle-wrap concern.
+   * Computes the interpolated pose at factor `alpha` (0..1) between the
+   * previous and current physics poses, so a variable-rate render loop stays
+   * smooth over fixed-step physics — publishing renderPosition/renderHeading/
+   * renderWheelSteer for PlayerView (and the camera, which follows
+   * renderPosition) to read. Pure state, no rendering: heading/steer use plain
+   * lerp since consecutive physics poses differ by at most one small step, so
+   * there's no angle-wrap concern.
    */
-  syncVisuals(alpha: number): void {
+  updateRenderPose(alpha: number): void {
     this.renderPosition.x = this.prevPosition.x + (this.position.x - this.prevPosition.x) * alpha;
     this.renderPosition.y = this.prevPosition.y + (this.position.y - this.prevPosition.y) * alpha;
     this.renderPosition.z = this.prevPosition.z + (this.position.z - this.prevPosition.z) * alpha;
-    const heading = this.prevHeading + (this.heading - this.prevHeading) * alpha;
-    const steer = this.prevWheelSteer + (this.wheelSteer - this.prevWheelSteer) * alpha;
-
-    this.object3D.position.copy(toThreeVector3(this.renderPosition));
-    // Our world's Y (forward) maps to Three's Z, and our heading convention
-    // (0 = facing +Y, positive = turning toward +X) matches THREE's rotation.y
-    // directly once that axis remap is applied — no sign flip.
-    this.object3D.rotation.y = heading;
-    for (const wheel of this.frontWheels) wheel.rotation.y = steer;
+    this.renderHeading = this.prevHeading + (this.heading - this.prevHeading) * alpha;
+    this.renderWheelSteer = this.prevWheelSteer + (this.wheelSteer - this.prevWheelSteer) * alpha;
   }
 }
