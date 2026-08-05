@@ -6,9 +6,11 @@
   "scripts": {
     "build": "tsc",
     "watch": "tsc --watch",
-    "serve": "python3 -m http.server 5500"
+    "serve": "python3 -m http.server 5500",
+    "test": "tsc && node --test dist/test"
   },
   "devDependencies": {
+    "@types/node": "^26.1.2",
     "@types/three": "0.185.3",
     "typescript": "^5.5.0"
   },

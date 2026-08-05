@@ -248,7 +248,7 @@ every physics pass above) without pulling in Three.js, a DOM, or a `PlayerView` 
 Left alone: the debug panel binds to `Game.telemetry`/`Player` getters, all unchanged;
 transmission/steering/handbrake physics untouched, only the presentation boundary moved.
 
-## 4. Build automated physics telemetry/tests
+## 4. Build automated physics telemetry/tests  ✅ DONE
 
 Deterministic simulation tests for acceleration, braking, shifting, top speed, steering
 radius, grip limits, and control transitions.
@@ -257,9 +257,46 @@ radius, grip limits, and control transitions.
 
 **Why:** telemetry-driven tuning (dist-backed sim tables driving the real compiled
 classes) is already the working method for every pass above — formalize it into
-repeatable tests before more tuning makes the model harder to reason about. This repo
-currently has no test framework — first sub-step is picking a minimal one, or continuing
-the existing dist-backed-sim-script approach if that's preferred.
+repeatable tests before more tuning makes the model harder to reason about.
+
+**What was built:** Node's built-in test runner (`node:test`/`node:assert/strict`) —
+no new runtime dependency, only `@types/node` (dev-only, for type declarations).
+`npm test` runs `tsc && node --test dist/test`. `src/test/helpers.ts` holds shared
+setup (`controls()` builds a `ControlState` with everything released except overrides;
+`playerAtSpeed(mph)` drives a fresh headless `Player` to a target speed via full
+throttle — the exact pattern used ad hoc to verify every physics pass above, now
+reusable). Five test files convert this session's ad hoc verification into permanent
+regression tests:
+- `acceleration.test.ts` — 0-60/0-100 timing within a generous tolerance band (regression
+  guard, not a tuning target), `MAX_SPEED` never exceeded, top speed/gear at sustained
+  full throttle.
+- `braking.test.ts` — brake/handbrake/coast decelerate at exactly `BRAKE_FORCE`/
+  `HANDBRAKE_FORCE`/`FRICTION`; handbrake stops exactly at zero and never reverses.
+- `shifting.test.ts` — automatic gear sequence climbs 1-by-1 to 5th, never out of
+  range; manual R-N-1-...-5 cascades one gear per cooldown window when held; upshift
+  torque-cut activates and fully clears after `SHIFT_TORQUE_CUT_MS`.
+- `steering.test.ts` — friction-circle coasting grip matches
+  `sqrt(TIRE_GRIP² - FRICTION²)` exactly at every speed; full brake zeroes cornering
+  capacity; no steering input means no yaw regardless of speed.
+- `handbrakeSlide.test.ts` — the most valuable regression guard here: `driftAngleDeg`
+  is exactly `0` during ordinary cornering that never touches the handbrake, at every
+  speed (this is precisely the steady-state-lag bug caught and fixed during the
+  handbrake pass — this test fails loudly if that regresses). Also covers: handbrake
+  produces a real slide, releasing it recovers to exactly 0, high-speed handbrake+lock
+  stays bounded at `HANDBRAKE_MAX_YAW_RATE`, handbrake alone doesn't rotate.
+- `trackQuery.test.ts` — oval/figure-eight geometry checks from item 1's ad hoc
+  verification (lateral offset sign/magnitude, curvature vs. analytic radius,
+  multi-loop `loopIndex` resolution, off-track detection).
+
+26 tests, all passing. One assertion had to tolerate `-0` vs `0` (`Math.abs(...)` before
+comparing) — a harmless floating-point sign-bit artifact from `Math.max(-0, ...)` when
+a grip cap is exactly zero, not a real behavior difference; fixed in the test, not the
+production code.
+
+Left alone: no coverage yet for `Input`/`readControlState` (constructing `Input` needs
+a `window`, so it can't run headless under plain Node without a DOM shim — not
+attempted here, low value relative to the physics coverage above) or `TrackWorld`'s
+mesh-building (rendering-adjacent, out of scope for physics tests).
 
 ## 5. Add a proper road/off-road state
 
@@ -330,5 +367,8 @@ pass once items 3-6 above are done, in-browser, with the real telemetry.
   moved to a new Tuning backlog section at the end, to be done as one pass after
   feature work, not interleaved with it. Renumbered items 4-7 → 4-6.
 - 2026-08-04 — Item 3 (separate simulation from presentation) done: `PlayerView` now
-  owns all Three.js concerns; `Player` is Three.js-free and verified headless. Next:
-  item 4 (automated physics tests) — no tuning until items 4-6 are done.
+  owns all Three.js concerns; `Player` is Three.js-free and verified headless.
+- 2026-08-04 — Item 4 (automated physics tests) done: Node's built-in test runner,
+  `npm test`, 26 tests across acceleration/braking/shifting/steering/handbrake-slide/
+  TrackQuery, all passing. Next: item 5 (road/off-road state) — no tuning until items
+  5-6 are done.
