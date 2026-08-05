@@ -1,4 +1,5 @@
 import { Input } from "./input.js";
+import { readControlState } from "./controlState.js";
 import { Renderer } from "./renderer.js";
 import { TrackView } from "./trackView.js";
 import { Hud } from "./hud.js";
@@ -147,7 +148,8 @@ export class Game {
     if (this.input.wasPressed("r")) {
       this.player.respawn(this.spawn.position, this.spawn.headingRad);
     }
-    this.player.update(dt, this.input);
+    const controls = readControlState(this.input);
+    this.player.update(dt, controls);
     this.input.endFrame();
   }
 

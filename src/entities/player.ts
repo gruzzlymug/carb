@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import type { Vec3 } from "../math/vector3.js";
-import type { Input } from "../engine/input.js";
+import type { ControlState } from "../engine/controlState.js";
 import { createCar, createWheel, WHEEL_OFFSETS } from "../graphics/procedural.js";
 import { createMeshObject } from "../graphics/toThreeGeometry.js";
 import { toThreeVector3 } from "../graphics/coordinates.js";
@@ -157,7 +157,7 @@ export class Player {
     }
   }
 
-  update(dt: number, input: Input): void {
+  update(dt: number, controls: ControlState): void {
     // Snapshot the pose before this step mutates it, for render interpolation.
     this.prevPosition.x = this.position.x;
     this.prevPosition.y = this.position.y;
@@ -165,19 +165,15 @@ export class Player {
     this.prevHeading = this.heading;
     this.prevWheelSteer = this.wheelSteer;
 
-    const throttle = input.isHeld("w");
-    const steerLeft = input.isHeld("a");
-    const steerRight = input.isHeld("d");
-    const brake = input.isHeld("s");
-    const handbrake = input.isHeld("space");
+    const { throttle, brake, steerLeft, steerRight, handbrake } = controls;
     const manual = transmissionSettings.mode === "manual";
     const speedBefore = this.speed; // for longitudinal-accel telemetry
     this.shiftCooldown = Math.max(0, this.shiftCooldown - dt);
     this.shiftTorqueCutRemaining = Math.max(0, this.shiftTorqueCutRemaining - dt);
 
     if (manual) {
-      if (input.wasPressed("e")) this.shiftUp();
-      if (input.wasPressed("q")) this.shiftDown();
+      if (controls.shiftUp) this.shiftUp();
+      if (controls.shiftDown) this.shiftDown();
     }
 
     const engaged = this.gear !== 0; // false only in Neutral
