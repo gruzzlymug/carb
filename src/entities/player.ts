@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import type { Vec3 } from "../math/vector3.js";
+import { angleDelta } from "../math/vector3.js";
 import type { ControlState } from "../engine/controlState.js";
 import { createCar, createWheel, WHEEL_OFFSETS } from "../graphics/procedural.js";
 import { createMeshObject } from "../graphics/toThreeGeometry.js";
@@ -15,6 +16,10 @@ import {
   FRICTION,
   VEHICLE_WHEELBASE,
   TIRE_GRIP,
+  HANDBRAKE_MAX_YAW_RATE,
+  SLIP_RECOVERY_PER_SEC,
+  SLIP_HOLD_PER_SEC,
+  SLIP_CATCH_EPSILON_RAD,
   WHEEL_MAX_STEER_RAD,
   WHEEL_STEER_SMOOTH_PER_SEC,
   TOP_SPEED_FALLOFF,
@@ -115,7 +120,13 @@ function automaticGearFor(currentGear: number, speed: number, throttle: boolean,
  */
 export class Player {
   position: Vec3 = { x: 0, y: 0, z: 0 };
-  heading = 0; // radians; 0 = facing +Y (straight down the road)
+  heading = 0; // radians; 0 = facing +Y (straight down the road) — the car's NOSE direction
+  // Direction the car is actually TRAVELING, in radians. Normally chases `heading`
+  // almost instantly (see applySteering), so position moves exactly where the nose
+  // points, same as before this field existed. Only while the handbrake is held does
+  // it lag behind heading — that gap is the slide. Position integrates along this,
+  // not `heading`.
+  private velocityHeading = 0;
   speed = 0;
   gear = 1; // -1 = reverse, 0 = neutral, 1-5 = forward
   rpm = IDLE_RPM;
@@ -245,10 +256,12 @@ export class Player {
     // Wheels first: they deflect toward the input (eased), and that deflection
     // — not the raw key — is what steers the car.
     this.updateWheelSteer(dt, steerInput);
-    this.applySteering(dt, longAccel);
+    this.applySteering(dt, longAccel, handbrake);
 
-    this.position.x += Math.sin(this.heading) * this.speed * dt;
-    this.position.y += Math.cos(this.heading) * this.speed * dt;
+    // Along velocityHeading (direction of travel), not heading (nose direction) —
+    // normally identical, but they diverge mid-slide (see applySteering).
+    this.position.x += Math.sin(this.velocityHeading) * this.speed * dt;
+    this.position.y += Math.cos(this.velocityHeading) * this.speed * dt;
     // Visuals are applied at render time (syncVisuals) from the interpolated
     // pose, not here — physics only advances state.
   }
@@ -346,31 +359,38 @@ export class Player {
    *   grip cap          = available lateral / speed   (lateral accel = speed * yaw)
    *
    * The geometry term means the car only turns while rolling and turns
-   * harder the faster it goes for a given lock. The grip cap used to be a
-   * flat TIRE_GRIP/speed — now it's a friction circle: TIRE_GRIP is the
-   * tires' total available grip, and accelerating or braking hard (`longAccel`,
-   * measured this same step) spends part of that budget, leaving less for
-   * cornering. This is what makes trail-braking and "gas it mid-corner and
-   * you'll wash out" meaningful, and it's continuous — grip fades in as
-   * longAccel fades out, not a step function. At longAccel = 0 this reduces
-   * to exactly the old TIRE_GRIP/speed cap. Reverse falls out for free:
-   * negative speed flips the yaw sign.
+   * harder the faster it goes for a given lock. The grip cap is a friction
+   * circle: TIRE_GRIP is the tires' total available grip, and accelerating or
+   * braking hard (`longAccel`, measured this same step) spends part of that
+   * budget, leaving less for cornering — continuous, not a step function. At
+   * longAccel = 0 this reduces to a flat TIRE_GRIP/speed cap.
+   *
+   * Handbrake is a separate case: the rear tires lose grip, so cornering is no
+   * longer limited by the friction circle at all — yaw is driven almost
+   * directly by steering geometry, up to a bounded HANDBRAKE_MAX_YAW_RATE (a
+   * stability cap, not a tire limit). That's what lets the nose rotate faster
+   * than the car's momentum can follow — see the velocityHeading blend below,
+   * which is the actual slide.
+   *
+   * Reverse falls out for free: negative speed flips the yaw sign.
    */
-  private applySteering(dt: number, longAccel: number): void {
+  private applySteering(dt: number, longAccel: number, handbrake: boolean): void {
     if (this.wheelSteer === 0 || this.speed === 0) {
       this.lastYawRate = 0;
       this.lastLateralAccel = 0;
       this.lastGripLimited = false;
       this.lastSteeringLimited = false;
       this.lastTurnRadius = Infinity;
+      this.blendVelocityHeading(dt, handbrake);
       return;
     }
     // Two independent limits on how tight the car can turn: the steering
-    // geometry (desiredYaw at the current wheel angle) and the tire-grip cap
-    // (maxYaw). Whichever is smaller wins.
+    // geometry (desiredYaw at the current wheel angle) and the grip cap
+    // (maxYaw, friction circle normally; a bounded, much looser cap under
+    // handbrake since the rear end has let go). Whichever is smaller wins.
     const desiredYaw = (this.speed / VEHICLE_WHEELBASE) * Math.tan(this.wheelSteer);
     const availableLateral = Math.sqrt(Math.max(0, TIRE_GRIP * TIRE_GRIP - longAccel * longAccel));
-    const maxYaw = availableLateral / Math.max(Math.abs(this.speed), 1);
+    const maxYaw = handbrake ? HANDBRAKE_MAX_YAW_RATE : availableLateral / Math.max(Math.abs(this.speed), 1);
     const yawRate = Math.max(-maxYaw, Math.min(maxYaw, desiredYaw));
     this.heading += yawRate * dt;
     this.lastYawRate = yawRate;
@@ -382,6 +402,32 @@ export class Player {
     const atFullLock = Math.abs(this.wheelSteer) >= WHEEL_MAX_STEER_RAD - 1e-3;
     this.lastSteeringLimited = atFullLock && !this.lastGripLimited;
     this.lastTurnRadius = Math.abs(yawRate) > 1e-4 ? Math.abs(this.speed / yawRate) : Infinity;
+    this.blendVelocityHeading(dt, handbrake);
+  }
+
+  /**
+   * Eases velocityHeading (direction of travel) toward heading (nose
+   * direction). Holding the handbrake slows the chase way down, so heading
+   * can swing ahead of velocityHeading — that gap is the slide. Off the
+   * handbrake, it catches up fast, but below SLIP_CATCH_EPSILON_RAD it snaps
+   * exactly instead of asymptotically approaching: a continuous blend toward
+   * a moving target always has a small nonzero steady-state lag, even
+   * starting from equality, and ordinary grip-limited steering's per-step
+   * heading change is small enough to fall under that threshold every step —
+   * so normal (never-slid) cornering stays exactly lag-free, and only an
+   * actual handbrake slide's much larger offset takes the blended path.
+   */
+  private blendVelocityHeading(dt: number, handbrake: boolean): void {
+    if (handbrake) {
+      this.velocityHeading += angleDelta(this.velocityHeading, this.heading) * Math.min(1, SLIP_HOLD_PER_SEC * dt);
+      return;
+    }
+    const remaining = angleDelta(this.velocityHeading, this.heading);
+    if (Math.abs(remaining) < SLIP_CATCH_EPSILON_RAD) {
+      this.velocityHeading = this.heading;
+    } else {
+      this.velocityHeading += remaining * Math.min(1, SLIP_RECOVERY_PER_SEC * dt);
+    }
   }
 
   /** "R", "N", or the forward gear number — for the HUD. */
@@ -453,10 +499,21 @@ export class Player {
     return this.shiftTorqueCutRemaining * 1000;
   }
 
+  /** Angle between nose direction and direction of travel, degrees — 0 unless mid-slide. Telemetry. */
+  get driftAngleDeg(): number {
+    return (angleDelta(this.velocityHeading, this.heading) * 180) / Math.PI;
+  }
+
+  /** True once the drift angle is large enough to read as an actual slide, not steering noise. Telemetry. */
+  get isDrifting(): boolean {
+    return Math.abs(this.driftAngleDeg) > 5;
+  }
+
   /** Teleports the car to a new position/heading (e.g. spawning onto a track) and resets speed/gear/RPM. */
   respawn(position: Vec3, headingRad: number): void {
     this.position = { ...position };
     this.heading = headingRad;
+    this.velocityHeading = headingRad;
     this.speed = 0;
     this.gear = 1;
     this.rpm = IDLE_RPM;

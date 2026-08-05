@@ -33,6 +33,8 @@ export interface Telemetry {
   turnRadius: number; // current turn radius, meters (0 when straight)
   cornerLimit: string; // "grip" / "steering" / "none" — what's limiting cornering
   shiftCutMs: number; // ms remaining in the post-upshift torque cut (0 when inactive)
+  driftAngleDeg: number; // angle between nose direction and direction of travel; 0 unless mid-slide
+  isDrifting: boolean; // whether driftAngleDeg is large enough to read as an actual slide
   lateralOffsetM: number; // signed distance from the nearest centerline; + = left, - = right
   trackCurvature: number; // signed curvature (1/m) of the track at the nearest point
   onRoad: boolean; // whether the car's position falls within the paved road width
@@ -54,6 +56,8 @@ export class Game {
     turnRadius: 0,
     cornerLimit: "none",
     shiftCutMs: 0,
+    driftAngleDeg: 0,
+    isDrifting: false,
     lateralOffsetM: 0,
     trackCurvature: 0,
     onRoad: true,
@@ -181,6 +185,8 @@ export class Game {
     this.telemetry.turnRadius = Math.round(this.player.turnRadiusM);
     this.telemetry.cornerLimit = this.player.steeringLimit;
     this.telemetry.shiftCutMs = Math.round(this.player.shiftTorqueCutRemainingMs);
+    this.telemetry.driftAngleDeg = Math.round(this.player.driftAngleDeg * 10) / 10;
+    this.telemetry.isDrifting = this.player.isDrifting;
 
     const surface = this.trackQuery.nearestPoint(this.player.position);
     this.telemetry.lateralOffsetM = Math.round(surface.lateralOffset * 100) / 100;

@@ -1,5 +1,5 @@
 import type { Vec3 } from "../math/vector3.js";
-import { perpendicular, dotVec3 } from "../math/vector3.js";
+import { perpendicular, dotVec3, angleDelta } from "../math/vector3.js";
 import type { SampledTrack, SampledLoop } from "./trackSpline.js";
 import { ROAD_WIDTH } from "../util/constants.js";
 
@@ -44,14 +44,6 @@ export interface TrackQuery {
 
 function angleOf(v: Vec3): number {
   return Math.atan2(v.x, v.y);
-}
-
-/** Smallest signed angle from `a` to `b`, in (-PI, PI]. */
-function angleDelta(a: number, b: number): number {
-  let delta = b - a;
-  while (delta > Math.PI) delta -= 2 * Math.PI;
-  while (delta <= -Math.PI) delta += 2 * Math.PI;
-  return delta;
 }
 
 /** Finite-difference curvature at each sample from its neighbors' tangent angles over arc length. */

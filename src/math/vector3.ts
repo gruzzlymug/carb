@@ -41,3 +41,11 @@ export function perpendicular(tangent: Vec3): Vec3 {
   const length = Math.hypot(tangent.x, tangent.y) || 1;
   return { x: -tangent.y / length, y: tangent.x / length, z: 0 };
 }
+
+/** Smallest signed angle from `a` to `b`, in radians, in (-PI, PI]. */
+export function angleDelta(a: number, b: number): number {
+  let delta = b - a;
+  while (delta > Math.PI) delta -= 2 * Math.PI;
+  while (delta <= -Math.PI) delta += 2 * Math.PI;
+  return delta;
+}

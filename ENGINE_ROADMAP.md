@@ -166,15 +166,50 @@ eventually limit driving feel more than graphics or engine architecture.
      a corner is ~7% less grippy than before (14.83 vs. the old flat 16 m/s²). If that
      reads as "looser than before even off the brakes" in-browser, that's this.
 
+4. **Handbrake rear-grip rotation (slip/drift state)** — the model had no way for the
+   car's direction of travel to differ from its nose direction at all; position always
+   integrated exactly along `heading`. Added `velocityHeading` (direction of travel,
+   separate from `heading`, the nose direction) to `Player`; position now integrates
+   along `velocityHeading` instead of `heading`. Off the handbrake, `velocityHeading`
+   chases `heading` — normally instantly (see the epsilon-snap note below), so nothing
+   about existing driving changes. While the handbrake is held: (a) cornering is no
+   longer limited by the friction circle at all — yaw is driven almost directly by
+   steering geometry, up to a bounded `HANDBRAKE_MAX_YAW_RATE` (a stability cap, not a
+   tire limit, so extreme-speed handbrake+full-lock spins hard but doesn't blow up
+   numerically); (b) `velocityHeading`'s chase rate drops way down
+   (`SLIP_HOLD_PER_SEC`), so the nose can swing ahead of the momentum — that gap is the
+   slide, exposed as `driftAngleDeg`/`isDrifting` telemetry. Releasing the handbrake
+   speeds the chase back up (`SLIP_RECOVERY_PER_SEC`) so the slide visibly "catches"
+   instead of popping straight.
+   - **Correctness subtlety caught during verification:** a naive continuous
+     blend-toward-`heading`, even at a fast rate, has a small nonzero *steady-state* lag
+     whenever `heading` is continuously rotating — i.e. it would have introduced a
+     permanent ~1–2° drift angle during ordinary sustained cornering that never touched
+     the handbrake, a real (if small) regression. Fixed with
+     `SLIP_CATCH_EPSILON_RAD` (~1.1°): below that residual, the recovery snaps exactly
+     to `heading` instead of asymptotically approaching it. Normal grip-limited
+     steering's per-step heading change always falls under that threshold, so it snaps
+     every step and never accumulates lag; only an actual handbrake slide's much larger
+     offset takes the blended path, and only while decaying through its last ~1°.
+   - Verified (dist-backed, driving the compiled `Player`): sustained full-lock
+     cornering at 30/60/90/120 mph with the handbrake never touched → `driftAngleDeg`
+     exactly `0.000000` at every speed (confirms zero regression to already-tuned
+     cornering). Handbrake + full steering at 40 mph → ~30° slide develops in 0.5s;
+     releasing it decays to ~6° in 83ms and snaps to exactly 0 by ~420ms (gradual catch,
+     not a pop). Handbrake + full-lock at 150 mph → yaw rate cleanly pins at the
+     `HANDBRAKE_MAX_YAW_RATE` bound (~200°/s), no blowup. Handbrake with no steering
+     input → zero yaw, zero drift (pure deceleration, as before). Position-path check: a
+     0.5s handbrake+steer at 40 mph rotates the nose 71° while the car's actual travel
+     direction only shifts 9° — the real signature of a slide, not just faster turning.
+   - `angleDelta` (smallest signed angle) extracted from `trackQuery.ts` into
+     `math/vector3.ts` as a shared util, now used by both.
+
 **Next (in order):**
-- **Handbrake reduces rear grip** so the car actually rotates (arcade handbrake turn)
-  instead of just decelerating in a straight line. Needs a front/rear grip split — the
-  current single-heading model has no slip/drift state, it only decelerates on
-  handbrake. This is also the natural home for weight-transfer feel (more front grip
-  under braking, more rear grip under throttle) since it needs the same "load affects
-  grip" reasoning the friction circle introduced.
 - Speed-dependent steering sensitivity (e.g. 40°@≤40mph → 20°@150mph) — noted as a
   candidate, not started.
+- Weight-transfer feel (more front grip under braking, more rear grip under throttle)
+  — natural next step, uses the same "load affects grip" reasoning as both the
+  friction circle and the handbrake rear-grip split.
 - Surface-grip multiplier (road 16 / gravel 10 / grass 7 / ice 2 m/s²) — belongs with
   item 6 (off-road state), not this item; noted here since it uses the same `TIRE_GRIP`
   knob.
@@ -254,5 +289,8 @@ geometry and physics.
 - 2026-08-04 — Merged `PHYSICS_V2_PLAN.md` into this doc (single backlog going
   forward; that file is deleted). Filed its passes under the correct items above:
   transmission passes → item 3's foundation; steering/cornering passes → item 2;
-  track-sizing findings → item 1's known-gap note, blocked on item 3. Next: item 2's
-  handbrake/rear-grip pass, or move to item 3 if that needs more design time first.
+  track-sizing findings → item 1's known-gap note, blocked on item 3.
+- 2026-08-04 — Item 2, handbrake rear-grip rotation (slip/drift state) done and
+  verified — zero regression to normal cornering (confirmed numerically), genuine
+  recoverable slide under handbrake. Next: item 2's weight-transfer/steering-sensitivity
+  candidates, or move to item 3 (performance envelope) if those need more design time.

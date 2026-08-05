@@ -36,6 +36,31 @@ export const VEHICLE_WHEELBASE = 2.4; // meters, front axle to rear axle (matche
 // drop below speed^2 / TIRE_GRIP, which is what limits high-speed turning.
 // Lower it to model a slippery surface; raise it for more stick.
 export const TIRE_GRIP = 16; // meters/second^2 (~1.6g)
+// Handbrake turn: the rear tires lose grip, so yaw is no longer capped by the
+// friction circle above — it's driven almost directly by steering geometry
+// instead, up to this bounded rate (a stability/arcade cap, not a real tire
+// limit, so extreme-speed handbrake+full-lock spins hard but doesn't blow up
+// numerically). ~3.5 rad/s (~200 deg/s) is well above any yaw the friction
+// circle would allow at typical handbrake-turn speeds, so it doesn't clip a
+// normal handbrake turn — it only kicks in as a ceiling at higher speed.
+export const HANDBRAKE_MAX_YAW_RATE = 3.5; // rad/s
+// How fast the car's direction of travel (velocityHeading) chases its nose
+// direction (heading). Normally near-instant (SLIP_RECOVERY_PER_SEC) so the
+// car never visibly slides; while the handbrake is held, the chase slows way
+// down (SLIP_HOLD_PER_SEC) so the nose can rotate ahead of the momentum —
+// that gap IS the slide. Releasing the handbrake snaps the recovery rate back
+// to fast, so the slide "catches" instead of instantly popping straight.
+export const SLIP_RECOVERY_PER_SEC = 18;
+export const SLIP_HOLD_PER_SEC = 3;
+// Below this residual angle, the recovery chase snaps exactly to heading
+// instead of asymptotically approaching it. This is what keeps ordinary
+// (never-slid) cornering perfectly lag-free: any continuous blend-toward-a-
+// moving-target has a nonzero steady-state phase lag even starting from
+// equality, and normal grip-limited steering's per-step heading change never
+// exceeds this threshold — so it snaps every single step. Only an actual
+// handbrake slide's much larger offset takes the blended path, and only
+// while decaying through its last ~1 degree.
+export const SLIP_CATCH_EPSILON_RAD = 0.02; // ~1.1 degrees
 // Front-wheel steering deflection: the wheels yaw toward the input, eased so
 // it reads like a steering rack rather than snapping. This is both the
 // visible wheel angle AND the steering input to the bicycle model above.
