@@ -4,9 +4,15 @@ import { Player } from "../entities/player.js";
 import { buildTrackWorld } from "../world/trackWorld.js";
 import type { TrackQuery } from "../world/trackQuery.js";
 import { classifySurface } from "../world/surfaceState.js";
+import { transmissionSettings } from "../util/transmissionSettings.js";
 import { AiDriver } from "../gameplay/aiDriver.js";
 import { LapTracker } from "../gameplay/lapTracker.js";
 import { PHYSICS_DT } from "./helpers.js";
+
+// AiDriver never shifts gears itself — it assumes automatic mode (see its own
+// doc comment). Force it regardless of the app's own default, since these
+// tests exist to validate the AI's driving logic, not that limitation.
+transmissionSettings.mode = "automatic";
 
 const MAX_STEPS = 120 * 60 * 3; // 3 minutes of simulated time — generous for a ~1km lap
 

@@ -13,6 +13,7 @@ afterEach(() => {
 
 describe("automatic transmission", () => {
   it("shifts up through the gears in order under sustained full throttle, never skipping or reversing", () => {
+    transmissionSettings.mode = "automatic";
     const player = new Player();
     const gearsSeen: number[] = [player.gear];
     for (let i = 0; i < 30000; i++) {
@@ -26,6 +27,7 @@ describe("automatic transmission", () => {
   });
 
   it("never selects neutral or a gear outside 1-5 while driving forward", () => {
+    transmissionSettings.mode = "automatic";
     const player = new Player();
     for (let i = 0; i < 30000; i++) {
       player.update(PHYSICS_DT, controls({ throttle: true }));

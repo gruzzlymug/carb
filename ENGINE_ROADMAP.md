@@ -206,11 +206,39 @@ eventually limit driving feel more than graphics or engine architecture.
    - `angleDelta` (smallest signed angle) extracted from `trackQuery.ts` into
      `math/vector3.ts` as a shared util, now used by both.
 
+5. **Engine braking** — user-directed, out of the feature-work-first order (same as the
+   track redesign and autopilot passes). Coast deceleration (`Player`'s no-throttle/
+   no-brake branch) was a flat `FRICTION` regardless of gear or RPM — downshifting only
+   changed the gear number/sound, with zero effect on speed, which isn't how a manual
+   (or automatic) car behaves. Added `ENGINE_BRAKING` (constants.ts): an RPM-scaled
+   term (0 at idle, full at redline) stacked on top of `FRICTION` only while in gear and
+   coasting, using `rpmForGear(gear, speed)` — so a downshift (higher RPM at the same
+   road speed) now genuinely slows the car, not just changes the display.
+   - Verified: new unit test holding two `Player`s at the *same* speed in different
+     gears (5th vs. 2nd) confirms the lower gear decelerates harder — isolates the one
+     variable cleanly, unlike an end-to-end drive where both gears can end up RPM-pinned
+     near redline and mask the difference (learned this the hard way with an ad hoc
+     script before writing the proper isolated test).
+   - Two pre-existing tests assumed coast decel was pure `FRICTION`
+     (`braking.test.ts`, `steering.test.ts`'s friction-circle check) and needed updating
+     to account for the new RPM-scaled term — not a regression, the physics changed on
+     purpose.
+   - **Also changed alongside this:** `transmissionSettings`'s default flipped from
+     `"automatic"` to `"manual"` (user-directed). This broke the implicit assumption in
+     several tests that full-throttle-from-rest climbs gears on its own — `playerAtSpeed`
+     (`test/helpers.ts`) and any test with its own throttle-loop (`acceleration.test.ts`,
+     `aiDriver.test.ts`) now explicitly force automatic mode for their own purposes,
+     rather than relying on the app's default. `AiDriver` itself still has no gear
+     management of its own — it now depends on tests/callers setting automatic mode
+     explicitly, and **will get stuck in 1st gear if the debug panel's transmission
+     mode is left on Manual (now the default) while the autopilot drives** — a
+     pre-existing documented limitation that's more likely to be hit now.
+
 Remaining feel-tuning candidates for this item (speed-dependent steering sensitivity,
 weight-transfer feel, `TIRE_GRIP` tuning) are moved to the **Tuning backlog** at the end
-of this doc — the structural capability (friction circle, handbrake slip state) is done;
-what's left is refinement, not new capability, so it waits until the feature-work items
-below are done.
+of this doc — the structural capability (friction circle, handbrake slip state, engine
+braking) is done; what's left is refinement, not new capability, so it waits until the
+feature-work items below are done.
 
 ## 3. Separate simulation from presentation further  ✅ DONE
 
@@ -564,5 +592,16 @@ pass once items 3-6 above are done, in-browser, with the real telemetry.
   lookahead braked too late at high speed and put the AI 90% off-road; scaling it with
   the car's own speed fixed it to 0% off-road on all three tracks. Doubles as an
   automated sanity check that the Pass 2 track redesign is actually drivable. 2 new
-  tests, 47 total, all passing. Next: a second AI opponent car, traffic/hazards, race
-  modes — no tuning until item 6's chain is done.
+  tests, 47 total, all passing.
+- Follow-up same day — AI: driver reported gear hunting on one corner and throttle not
+  holding steady like a human. Root cause found (throttle/brake recomputed from scratch
+  every step, flickering near the target speed) but the hysteresis fix regressed the
+  figure-eight to 50% off-road for a reason not fully understood; reverted rather than
+  keep debugging per user direction. AI left as shipped (0% off-road, some flicker).
+- 2026-08-07 — Engine braking added (item 2, entry 5; user-directed, out of order):
+  coast deceleration now scales with RPM, so downshifting actually slows the car, not
+  just the display. `transmissionSettings` default flipped automatic → manual
+  (user-directed) — updated tests that implicitly assumed automatic-by-default;
+  `AiDriver`'s existing "gets stuck in 1st under Manual" limitation is now more
+  reachable in normal play since Manual is the default. 2 new tests, 48 total, all
+  passing.

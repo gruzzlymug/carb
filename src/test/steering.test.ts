@@ -1,14 +1,18 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { TIRE_GRIP, FRICTION, BRAKE_FORCE } from "../util/constants.js";
+import { TIRE_GRIP, BRAKE_FORCE } from "../util/constants.js";
 import { playerAtSpeed, step, controls } from "./helpers.js";
 
 describe("friction-circle cornering grip", () => {
-  it("coasting lateral grip matches sqrt(TIRE_GRIP^2 - FRICTION^2) at every speed", () => {
-    const expected = Math.sqrt(TIRE_GRIP * TIRE_GRIP - FRICTION * FRICTION);
+  it("coasting lateral grip matches sqrt(TIRE_GRIP^2 - coastDecel^2) at every speed", () => {
     for (const mph of [30, 60, 90, 120, 150]) {
       const player = playerAtSpeed(mph);
       step(player, 40, controls({ steerRight: true })); // let wheel steer reach full lock
+      // Coast decel (FRICTION plus RPM-scaled engine braking, see braking.test.ts) varies
+      // by gear/speed — use the actual measured value from this same step rather than
+      // recomputing it, so there's no pre/post-step timing mismatch to account for.
+      const coastDecel = Math.abs(player.longitudinalAccel);
+      const expected = Math.sqrt(Math.max(0, TIRE_GRIP * TIRE_GRIP - coastDecel * coastDecel));
       assert.ok(
         Math.abs(player.lateralAccel - expected) < 0.05,
         `at ${mph} mph expected lateralAccel ~${expected.toFixed(2)}, got ${player.lateralAccel.toFixed(2)}`

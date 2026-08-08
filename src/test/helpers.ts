@@ -1,5 +1,6 @@
 import type { ControlState } from "../engine/controlState.js";
 import { Player } from "../entities/player.js";
+import { transmissionSettings } from "../util/transmissionSettings.js";
 import { PHYSICS_DT } from "../util/constants.js";
 
 export { PHYSICS_DT };
@@ -26,6 +27,10 @@ export function step(player: Player, n: number, c: ControlState): void {
 
 /** A fresh Player accelerated in a straight line (full throttle) to at least `targetMph`. */
 export function playerAtSpeed(targetMph: number, maxSteps = 30000): Player {
+  // Needs to climb through the gears to reach highway speeds — force automatic
+  // mode regardless of the app's own default, since that's an implementation
+  // detail of "get up to speed," not something most callers care about.
+  transmissionSettings.mode = "automatic";
   const player = new Player();
   const target = targetMph * MPH;
   for (let i = 0; i < maxSteps && player.speed < target; i++) {

@@ -12,6 +12,7 @@ import {
   BRAKE_FORCE,
   HANDBRAKE_FORCE,
   FRICTION,
+  ENGINE_BRAKING,
   VEHICLE_WHEELBASE,
   TIRE_GRIP,
   HANDBRAKE_MAX_YAW_RATE,
@@ -218,8 +219,13 @@ export class Player {
       }
     } else {
       // Coast drag also scales with surface — grass/gravel bleed off speed faster
-      // than smooth pavement even with no brake input.
-      const frictionForce = FRICTION * surface.dragMultiplier;
+      // than smooth pavement even with no brake input. Engine braking adds to it
+      // while in gear, scaling with RPM — so a downshift (higher RPM at the same
+      // speed) genuinely slows the car, not just the sound/gauge.
+      const engineBrakingFraction = engaged
+        ? Math.max(0, Math.min(1, (rpmForGear(this.gear, this.speed) - IDLE_RPM) / (REDLINE_RPM - IDLE_RPM)))
+        : 0;
+      const frictionForce = FRICTION * surface.dragMultiplier + ENGINE_BRAKING * engineBrakingFraction;
       this.speed -= Math.sign(this.speed) * frictionForce * dt;
       if (Math.abs(this.speed) < frictionForce * dt) this.speed = 0;
     }

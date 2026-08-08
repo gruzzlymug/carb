@@ -1,8 +1,13 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { Player } from "../entities/player.js";
+import { transmissionSettings } from "../util/transmissionSettings.js";
 import { MAX_SPEED } from "../util/constants.js";
 import { PHYSICS_DT, MPH, controls } from "./helpers.js";
+
+// These tests need to climb through the gears to reach highway speeds —
+// force automatic mode regardless of the app's own default.
+transmissionSettings.mode = "automatic";
 
 /** Steps full throttle from rest until `targetMph` is reached; returns elapsed seconds (Infinity if never reached). */
 function timeToMph(targetMph: number, maxSteps = 40000): number {

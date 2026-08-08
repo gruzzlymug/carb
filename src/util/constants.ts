@@ -25,6 +25,13 @@ export const ACCELERATION = 8; // meters/second^2
 export const BRAKE_FORCE = 20; // meters/second^2
 export const HANDBRAKE_FORCE = 35; // meters/second^2; stronger than BRAKE_FORCE, never reverses
 export const FRICTION = 6; // meters/second^2, applied when coasting
+// Engine braking: extra off-throttle deceleration from compression/pumping
+// losses, scales with RPM (0 at idle, full at redline) so it's stacked on
+// top of FRICTION only while in gear and coasting — never during throttle
+// or brake. This is what makes a downshift actually slow the car, not just
+// change the sound/gauge: a lower gear means higher RPM at the same road
+// speed, so it brakes harder while off-throttle, same as a real manual/auto.
+export const ENGINE_BRAKING = 10; // meters/second^2, additional coast decel at redline RPM
 // Steering is a kinematic bicycle model (see entities/player.ts): the front
 // wheels deflect toward the input, and that deflection + road speed set a
 // desired yaw rate, which tire grip then caps. So the car turns only when

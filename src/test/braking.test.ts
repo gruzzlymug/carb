@@ -1,7 +1,9 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { BRAKE_FORCE, HANDBRAKE_FORCE, FRICTION } from "../util/constants.js";
-import { playerAtSpeed, step, controls } from "./helpers.js";
+import { BRAKE_FORCE, HANDBRAKE_FORCE, FRICTION, ENGINE_BRAKING, IDLE_RPM, REDLINE_RPM } from "../util/constants.js";
+import { rpmForGear } from "../util/engineModel.js";
+import { Player } from "../entities/player.js";
+import { playerAtSpeed, step, controls, MPH } from "./helpers.js";
 
 describe("braking", () => {
   it("brake decelerates at exactly BRAKE_FORCE while moving", () => {
@@ -32,12 +34,36 @@ describe("braking", () => {
     assert.equal(player.speed, 0, "handbrake should stop exactly at zero, never past it");
   });
 
-  it("coasting (no input) decelerates at exactly FRICTION", () => {
+  it("coasting (no input) decelerates at FRICTION plus RPM-scaled engine braking", () => {
     const player = playerAtSpeed(60);
+    const gearBefore = player.gear;
+    const speedBefore = player.speed;
     step(player, 1, controls({}));
+    const rpm = rpmForGear(gearBefore, speedBefore);
+    const engineBrakingFraction = Math.max(0, Math.min(1, (rpm - IDLE_RPM) / (REDLINE_RPM - IDLE_RPM)));
+    const expected = FRICTION + ENGINE_BRAKING * engineBrakingFraction;
     assert.ok(
-      Math.abs(player.longitudinalAccel + FRICTION) < 1e-6,
-      `expected longAccel ~ -${FRICTION}, got ${player.longitudinalAccel}`
+      Math.abs(player.longitudinalAccel + expected) < 1e-6,
+      `expected longAccel ~ -${expected}, got ${player.longitudinalAccel}`
+    );
+  });
+
+  it("a lower gear coasts to a stronger deceleration at the same road speed (engine braking)", () => {
+    const speed = 30 * MPH;
+
+    const highGear = new Player();
+    highGear.gear = 5;
+    highGear.speed = speed;
+    step(highGear, 1, controls({}));
+
+    const lowGear = new Player();
+    lowGear.gear = 2;
+    lowGear.speed = speed;
+    step(lowGear, 1, controls({}));
+
+    assert.ok(
+      Math.abs(lowGear.longitudinalAccel) > Math.abs(highGear.longitudinalAccel),
+      `expected 2nd gear to decelerate harder than 5th at the same speed: got ${lowGear.longitudinalAccel} vs ${highGear.longitudinalAccel}`
     );
   });
 });
