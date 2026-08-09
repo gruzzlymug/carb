@@ -3,7 +3,8 @@ import { readControlState } from "./controlState.js";
 import { Renderer } from "./renderer.js";
 import { TrackView } from "./trackView.js";
 import { Hud } from "./hud.js";
-import { EngineSound } from "./engineSound.js";
+import { Minimap } from "./minimap.js";
+import { EngineSound } from "./sound/engineSound.js";
 import { CAMERA_TYPES, DEFAULT_CAMERA_TYPE, type CameraController } from "./cameras/index.js";
 import { Player } from "../entities/player.js";
 import { PlayerView } from "../entities/playerView.js";
@@ -34,6 +35,8 @@ export interface Telemetry {
   wheelSteerDeg: number; // front-wheel deflection, degrees
   yawRateDeg: number; // deg/s
   lateralAccel: number; // m/s^2
+  desiredYawDeg: number; // deg/s, from steering geometry alone, before grip softening/assist/reverse cap
+  gripUtilization: number; // fraction of the physical yaw ceiling demanded (0..1+, briefly >1 mid-input)
   turnRadius: number; // current turn radius, meters (0 when straight)
   cornerLimit: string; // "grip" / "steering" / "none" — what's limiting cornering
   shiftCutMs: number; // ms remaining in the post-upshift torque cut (0 when inactive)
@@ -62,6 +65,8 @@ export class Game {
     wheelSteerDeg: 0,
     yawRateDeg: 0,
     lateralAccel: 0,
+    desiredYawDeg: 0,
+    gripUtilization: 0,
     turnRadius: 0,
     cornerLimit: "none",
     shiftCutMs: 0,
@@ -82,8 +87,9 @@ export class Game {
   private readonly trackView: TrackView;
   private readonly player = new Player();
   private readonly playerView = new PlayerView();
-  private readonly hud = new Hud();
-  private readonly engineSound = new EngineSound();
+  private readonly hud = new Hud(this.player.car.redlineRpm, this.player.car.recommendedShiftRpm);
+  private readonly minimap = new Minimap();
+  private readonly engineSound = new EngineSound(this.player.car);
   private readonly aiDriver = new AiDriver();
   private aiDriverEnabled = false;
   private cameraController: CameraController;
@@ -92,6 +98,7 @@ export class Game {
   private running = false;
   private canvasWidth = 0;
   private canvasHeight = 0;
+  private lastThrottle = false; // this frame's control state, read by presentFrame (engine audio only, no gameplay effect)
   private spawn: TrackWorld["spawn"] = { position: { x: 0, y: 0, z: 0 }, headingRad: 0 };
   /** Always assigned in the constructor via setTrackType before the loop starts. */
   private trackQuery!: TrackQuery;
@@ -144,6 +151,7 @@ export class Game {
     this.spawn = world.spawn;
     this.trackQuery = world.query;
     this.lapTracker = new LapTracker(this.trackQuery);
+    this.minimap.setTrack(world.loops);
     this.player.respawn(this.spawn.position, this.spawn.headingRad);
   }
 
@@ -193,6 +201,7 @@ export class Game {
       ? this.aiDriver.computeControls(this.player, this.trackQuery)
       : readControlState(this.input);
     const surface = classifySurface(this.trackQuery.nearestPoint(this.player.position).distance);
+    this.lastThrottle = controls.throttle;
     this.player.update(dt, controls, surface);
     this.lapTracker.update(dt, this.player.position);
     this.input.endFrame();
@@ -201,7 +210,8 @@ export class Game {
   /** Per-render-frame presentation: HUD, engine audio, and debug telemetry (read the latest physics state; no interpolation needed for readouts). */
   private presentFrame(): void {
     this.hud.update(this.player.speed, this.player.gearLabel, this.player.rpm);
-    this.engineSound.update(this.player.rpm, this.input.isHeld("w"));
+    this.engineSound.update(this.player.rpm, this.lastThrottle, this.player.gear);
+    this.minimap.update(this.player.renderPosition, this.player.renderHeading);
 
     this.telemetry.speedKmh = Math.round(Math.abs(this.player.speed) * 3.6);
     this.telemetry.gear = this.player.gearLabel;
@@ -213,6 +223,8 @@ export class Game {
     this.telemetry.wheelSteerDeg = Math.round(this.player.wheelSteerDeg);
     this.telemetry.yawRateDeg = Math.round(this.player.yawRateDeg);
     this.telemetry.lateralAccel = Math.round(this.player.lateralAccel * 100) / 100;
+    this.telemetry.desiredYawDeg = Math.round(this.player.desiredYawDeg);
+    this.telemetry.gripUtilization = Math.round(this.player.gripUtilization * 100) / 100;
     this.telemetry.turnRadius = Math.round(this.player.turnRadiusM);
     this.telemetry.cornerLimit = this.player.steeringLimit;
     this.telemetry.shiftCutMs = Math.round(this.player.shiftTorqueCutRemainingMs);

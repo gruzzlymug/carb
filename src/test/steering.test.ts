@@ -1,7 +1,9 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { TIRE_GRIP, BRAKE_FORCE } from "../util/constants.js";
+import { DEFAULT_CAR } from "../util/cars/index.js";
 import { playerAtSpeed, step, controls } from "./helpers.js";
+
+const TIRE_GRIP = DEFAULT_CAR.chassis.tireGrip;
 
 describe("friction-circle cornering grip", () => {
   it("coasting lateral grip matches sqrt(TIRE_GRIP^2 - coastDecel^2) at every speed", () => {
@@ -22,7 +24,7 @@ describe("friction-circle cornering grip", () => {
   });
 
   it("full brake (exceeding TIRE_GRIP) zeroes cornering capacity entirely", () => {
-    assert.ok(BRAKE_FORCE > TIRE_GRIP, "test assumes BRAKE_FORCE exceeds TIRE_GRIP");
+    assert.ok(DEFAULT_CAR.brakeForce > TIRE_GRIP, "test assumes brakeForce exceeds TIRE_GRIP");
     const player = playerAtSpeed(60);
     step(player, 40, controls({ brake: true, steerRight: true }));
     // Math.abs normalizes -0 -> 0: the clamp math can legitimately land on

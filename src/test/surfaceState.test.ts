@@ -1,9 +1,12 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { classifySurface, ROAD_SURFACE } from "../world/surfaceState.js";
-import { ROAD_WIDTH, TIRE_GRIP, FRICTION } from "../util/constants.js";
+import { ROAD_WIDTH } from "../util/constants.js";
+import { DEFAULT_CAR } from "../util/cars/index.js";
 import { Player } from "../entities/player.js";
 import { PHYSICS_DT, controls } from "./helpers.js";
+
+const TIRE_GRIP = DEFAULT_CAR.chassis.tireGrip;
 
 const HALF_WIDTH = ROAD_WIDTH / 2;
 
@@ -52,16 +55,20 @@ describe("Player surface-dependent physics", () => {
     for (let i = 0; i < 20000 && player.speed < 40 * 0.44704; i++) {
       player.update(PHYSICS_DT, controls({ throttle: true }), offRoad);
     }
-    for (let i = 0; i < 60; i++) player.update(PHYSICS_DT, controls({ steerRight: true }), offRoad);
+    // 30 steps (0.25s) is enough for the wheel to reach ~99.9% lock
+    // (WHEEL_STEER_SMOOTH_PER_SEC) while staying above the low-speed arcade
+    // yaw assist's fade-out speed (LOW_SPEED_ASSIST_MAX_SPEED) despite heavy
+    // off-road coast drag -- that assist intentionally bypasses the friction
+    // circle at very low speed, which this test isn't exercising.
+    for (let i = 0; i < 30; i++) player.update(PHYSICS_DT, controls({ steerRight: true }), offRoad);
 
     const expectedGrip = TIRE_GRIP * offRoad.gripMultiplier;
-    const expectedFriction = FRICTION * offRoad.dragMultiplier;
-    // Clamped like the production friction-circle math: with these placeholder
-    // multipliers, off-road coast friction alone already exceeds the reduced grip
-    // budget, so available lateral grip legitimately floors at 0 while coasting
-    // off-road (a real, if extreme, consequence of the placeholder numbers — see
-    // ENGINE_ROADMAP.md's Tuning backlog).
-    const expectedLateral = Math.sqrt(Math.max(0, expectedGrip * expectedGrip - expectedFriction * expectedFriction));
+    // Use the actual measured coast decel (friction plus RPM-scaled engine
+    // braking, see braking.test.ts) rather than recomputing just the friction
+    // term — engine braking varies with gear/RPM, so hand-rolling it here would
+    // drift from the real friction-circle budget the production code spends.
+    const coastDecel = Math.abs(player.longitudinalAccel);
+    const expectedLateral = Math.sqrt(Math.max(0, expectedGrip * expectedGrip - coastDecel * coastDecel));
     assert.ok(
       Math.abs(player.lateralAccel - expectedLateral) < 0.05,
       `expected lateralAccel ~${expectedLateral.toFixed(2)}, got ${player.lateralAccel.toFixed(2)}`

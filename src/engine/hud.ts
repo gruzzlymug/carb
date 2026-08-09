@@ -1,13 +1,13 @@
-import { REDLINE_RPM, RECOMMENDED_SHIFT_RPM } from "../util/constants.js";
 import type { LapState } from "../gameplay/lapTracker.js";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 
 // Analog tach dial geometry. A plain display/rendering choice, not vehicle
-// physics — decoupled from the engine's own RPM constants (IDLE/REDLINE/MAX
-// in util/constants.ts) so the gauge can use clean, human-readable round
-// numbers (0-8 x1000 RPM) regardless of exactly where redline sits.
-const GAUGE_MAX_RPM = 8000;
+// physics — decoupled from the engine's own RPM values (which now come from
+// the active car's CarConfig, see util/cars/) so the gauge can use clean,
+// human-readable round numbers (0-9 x1000 RPM) regardless of exactly where
+// redline sits.
+const GAUGE_MAX_RPM = 9000;
 const GAUGE_TICK_STEP_RPM = 1000;
 const GAUGE_CENTER_X = 80;
 const GAUGE_CENTER_Y = 84;
@@ -62,8 +62,13 @@ export class Hud {
   private readonly needleEl: SVGLineElement;
   private readonly rpmValueEl: HTMLDivElement;
   private readonly lapEl: HTMLDivElement;
+  private readonly redlineRpm: number;
+  private readonly recommendedShiftRpm: number;
 
-  constructor() {
+  /** `redlineRpm`/`recommendedShiftRpm` come from the active car's CarConfig (see util/cars/) — the dial's redline zone is baked in from these once, here, since it doesn't change after construction. */
+  constructor(redlineRpm: number, recommendedShiftRpm: number) {
+    this.redlineRpm = redlineRpm;
+    this.recommendedShiftRpm = recommendedShiftRpm;
     this.element = document.createElement("div");
     // Fixed to the top-left corner: the one place nothing else in this game's
     // UI (debug panel top-right, controls legend bottom-left) ever renders,
@@ -126,7 +131,7 @@ export class Hud {
     );
     dial.appendChild(
       svgEl("path", {
-        d: arcPath(REDLINE_RPM, GAUGE_MAX_RPM, GAUGE_RADIUS),
+        d: arcPath(this.redlineRpm, GAUGE_MAX_RPM, GAUGE_RADIUS),
         fill: "none",
         stroke: "#d83a3a",
         "stroke-width": "6",
@@ -144,7 +149,7 @@ export class Hud {
           y1: inner.y.toFixed(2),
           x2: outer.x.toFixed(2),
           y2: outer.y.toFixed(2),
-          stroke: rpm >= REDLINE_RPM ? "#d83a3a" : "rgba(255,255,255,0.6)",
+          stroke: rpm >= this.redlineRpm ? "#d83a3a" : "rgba(255,255,255,0.6)",
           "stroke-width": "2",
         })
       );
@@ -177,8 +182,8 @@ export class Hud {
     this.needleEl.setAttribute("x2", tip.x.toFixed(2));
     this.needleEl.setAttribute("y2", tip.y.toFixed(2));
 
-    this.rpmValueEl.textContent = `${Math.round(rpm)} RPM${rpm >= RECOMMENDED_SHIFT_RPM ? " — SHIFT!" : ""}`;
-    this.rpmValueEl.style.color = rpm >= REDLINE_RPM ? "#ff6b6b" : rpm >= RECOMMENDED_SHIFT_RPM ? "#e0c030" : "#aaa";
+    this.rpmValueEl.textContent = `${Math.round(rpm)} RPM${rpm >= this.recommendedShiftRpm ? " — SHIFT!" : ""}`;
+    this.rpmValueEl.style.color = rpm >= this.redlineRpm ? "#ff6b6b" : rpm >= this.recommendedShiftRpm ? "#e0c030" : "#aaa";
   }
 
   updateLap(lap: LapState): void {

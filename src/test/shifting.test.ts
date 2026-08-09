@@ -2,7 +2,7 @@ import { describe, it, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { Player } from "../entities/player.js";
 import { transmissionSettings } from "../util/transmissionSettings.js";
-import { SHIFT_TORQUE_CUT_MS } from "../util/constants.js";
+import { DEFAULT_CAR } from "../util/cars/index.js";
 import { PHYSICS_DT, controls, step } from "./helpers.js";
 
 // transmissionSettings is shared, mutable module state (see util/transmissionSettings.ts) —
@@ -53,15 +53,15 @@ describe("manual transmission", () => {
     assert.equal(player.gearLabel, "5");
   });
 
-  it("upshift triggers the torque-cut window, which fully clears after SHIFT_TORQUE_CUT_MS", () => {
+  it("upshift triggers the torque-cut window, which fully clears after DEFAULT_CAR.shiftTorqueCutMs", () => {
     transmissionSettings.mode = "manual";
     const player = new Player();
     step(player, 1, controls({ shiftUp: true })); // 1 -> 2
     assert.equal(player.gear, 2);
     assert.ok(player.shiftTorqueCutActive, "torque cut should be active immediately after an upshift");
-    assert.ok(player.shiftTorqueCutRemainingMs > 0 && player.shiftTorqueCutRemainingMs <= SHIFT_TORQUE_CUT_MS);
+    assert.ok(player.shiftTorqueCutRemainingMs > 0 && player.shiftTorqueCutRemainingMs <= DEFAULT_CAR.shiftTorqueCutMs);
 
-    const stepsToClear = Math.ceil(SHIFT_TORQUE_CUT_MS / 1000 / PHYSICS_DT) + 2;
+    const stepsToClear = Math.ceil(DEFAULT_CAR.shiftTorqueCutMs / 1000 / PHYSICS_DT) + 2;
     step(player, stepsToClear, controls({}));
     assert.equal(player.shiftTorqueCutActive, false, "torque cut should have cleared by now");
     assert.equal(player.shiftTorqueCutRemainingMs, 0);

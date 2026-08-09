@@ -2,7 +2,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { Player } from "../entities/player.js";
 import { transmissionSettings } from "../util/transmissionSettings.js";
-import { MAX_SPEED } from "../util/constants.js";
+import { DEFAULT_CAR } from "../util/cars/index.js";
 import { PHYSICS_DT, MPH, controls } from "./helpers.js";
 
 // These tests need to climb through the gears to reach highway speeds —
@@ -34,11 +34,11 @@ describe("acceleration", () => {
     assert.ok(t > 4.5 && t < 7.5, `expected ~5.8s, got ${t.toFixed(2)}s`);
   });
 
-  it("never exceeds MAX_SPEED even under sustained full throttle", () => {
+  it("never exceeds DEFAULT_CAR.maxSpeed even under sustained full throttle", () => {
     const player = new Player();
     for (let i = 0; i < 30000; i++) {
       player.update(PHYSICS_DT, controls({ throttle: true }));
-      assert.ok(player.speed <= MAX_SPEED + 1e-9, `speed ${player.speed} exceeded MAX_SPEED ${MAX_SPEED}`);
+      assert.ok(player.speed <= DEFAULT_CAR.maxSpeed + 1e-9, `speed ${player.speed} exceeded DEFAULT_CAR.maxSpeed ${DEFAULT_CAR.maxSpeed}`);
     }
   });
 

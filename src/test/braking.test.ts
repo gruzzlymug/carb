@@ -1,17 +1,17 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { BRAKE_FORCE, HANDBRAKE_FORCE, FRICTION, ENGINE_BRAKING, IDLE_RPM, REDLINE_RPM } from "../util/constants.js";
+import { DEFAULT_CAR } from "../util/cars/index.js";
 import { rpmForGear } from "../util/engineModel.js";
 import { Player } from "../entities/player.js";
 import { playerAtSpeed, step, controls, MPH } from "./helpers.js";
 
 describe("braking", () => {
-  it("brake decelerates at exactly BRAKE_FORCE while moving", () => {
+  it("brake decelerates at exactly brakeForce while moving", () => {
     const player = playerAtSpeed(60);
     step(player, 1, controls({ brake: true }));
     assert.ok(
-      Math.abs(player.longitudinalAccel + BRAKE_FORCE) < 1e-6,
-      `expected longAccel ~ -${BRAKE_FORCE}, got ${player.longitudinalAccel}`
+      Math.abs(player.longitudinalAccel + DEFAULT_CAR.brakeForce) < 1e-6,
+      `expected longAccel ~ -${DEFAULT_CAR.brakeForce}, got ${player.longitudinalAccel}`
     );
   });
 
@@ -24,7 +24,7 @@ describe("braking", () => {
       Math.abs(handbrakingPlayer.longitudinalAccel) > Math.abs(brakingPlayer.longitudinalAccel),
       "handbrake should decelerate harder than the regular brake"
     );
-    assert.ok(Math.abs(handbrakingPlayer.longitudinalAccel + HANDBRAKE_FORCE) < 1e-6);
+    assert.ok(Math.abs(handbrakingPlayer.longitudinalAccel + DEFAULT_CAR.handbrakeForce) < 1e-6);
   });
 
   it("handbrake stops at zero and never reverses", () => {
@@ -34,14 +34,17 @@ describe("braking", () => {
     assert.equal(player.speed, 0, "handbrake should stop exactly at zero, never past it");
   });
 
-  it("coasting (no input) decelerates at FRICTION plus RPM-scaled engine braking", () => {
+  it("coasting (no input) decelerates at friction plus RPM-scaled engine braking", () => {
     const player = playerAtSpeed(60);
     const gearBefore = player.gear;
     const speedBefore = player.speed;
     step(player, 1, controls({}));
-    const rpm = rpmForGear(gearBefore, speedBefore);
-    const engineBrakingFraction = Math.max(0, Math.min(1, (rpm - IDLE_RPM) / (REDLINE_RPM - IDLE_RPM)));
-    const expected = FRICTION + ENGINE_BRAKING * engineBrakingFraction;
+    const rpm = rpmForGear(gearBefore, speedBefore, DEFAULT_CAR);
+    const engineBrakingFraction = Math.max(
+      0,
+      Math.min(1, (rpm - DEFAULT_CAR.idleRpm) / (DEFAULT_CAR.redlineRpm - DEFAULT_CAR.idleRpm))
+    );
+    const expected = DEFAULT_CAR.friction + DEFAULT_CAR.engineBraking * engineBrakingFraction;
     assert.ok(
       Math.abs(player.longitudinalAccel + expected) < 1e-6,
       `expected longAccel ~ -${expected}, got ${player.longitudinalAccel}`

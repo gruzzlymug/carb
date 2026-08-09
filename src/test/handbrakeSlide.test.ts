@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { HANDBRAKE_MAX_YAW_RATE } from "../util/constants.js";
+import { DEFAULT_CAR } from "../util/cars/index.js";
 import { playerAtSpeed, step, controls } from "./helpers.js";
 
 describe("handbrake rear-grip rotation (slip/drift state)", () => {
@@ -37,8 +37,8 @@ describe("handbrake rear-grip rotation (slip/drift state)", () => {
     const player = playerAtSpeed(150);
     step(player, 20, controls({ handbrake: true, steerRight: true }));
     const yawRateRad = (player.yawRateDeg * Math.PI) / 180;
-    assert.ok(Math.abs(yawRateRad) <= HANDBRAKE_MAX_YAW_RATE + 1e-6, "yaw rate should not exceed the stability cap");
-    assert.ok(Math.abs(yawRateRad) > HANDBRAKE_MAX_YAW_RATE - 0.05, "should be pinned at the cap, not far under it");
+    assert.ok(Math.abs(yawRateRad) <= DEFAULT_CAR.chassis.handbrakeMaxYawRate + 1e-6, "yaw rate should not exceed the stability cap");
+    assert.ok(Math.abs(yawRateRad) > DEFAULT_CAR.chassis.handbrakeMaxYawRate - 0.05, "should be pinned at the cap, not far under it");
   });
 
   it("handbrake with no steering input just decelerates in a straight line", () => {

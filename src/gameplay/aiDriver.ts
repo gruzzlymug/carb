@@ -3,7 +3,6 @@ import { angleDelta } from "../math/vector3.js";
 import type { ControlState } from "../engine/controlState.js";
 import type { TrackQuery } from "../world/trackQuery.js";
 import type { Player } from "../entities/player.js";
-import { TIRE_GRIP } from "../util/constants.js";
 
 const STEER_LOOKAHEAD_METERS = 15; // short, fixed — just "which way does the road go next"
 const STEER_DEADZONE_RAD = 0.03; // avoid twitchy left/right flapping when nearly aligned
@@ -68,7 +67,8 @@ export class AiDriver {
     const steerLeft = headingError > STEER_DEADZONE_RAD;
     const steerRight = headingError < -STEER_DEADZONE_RAD;
 
-    const speedLimit = (curvature: number) => Math.sqrt(TIRE_GRIP / Math.max(Math.abs(curvature), 1e-4));
+    const tireGrip = player.car.chassis.tireGrip;
+    const speedLimit = (curvature: number) => Math.sqrt(tireGrip / Math.max(Math.abs(curvature), 1e-4));
     let minSpeedLimit = speedLimit(here.curvature);
     const brakeLookaheadDistance = Math.max(BRAKE_LOOKAHEAD_MIN_METERS, Math.abs(player.speed) * BRAKE_LOOKAHEAD_SECONDS);
     for (let i = 1; i <= BRAKE_LOOKAHEAD_SAMPLES; i++) {

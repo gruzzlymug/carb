@@ -16,7 +16,7 @@ export interface SurfaceState {
 
 export const ROAD_SURFACE: SurfaceState = { kind: "road", gripMultiplier: 1, dragMultiplier: 1 };
 const SHOULDER_SURFACE: SurfaceState = { kind: "shoulder", gripMultiplier: 0.7, dragMultiplier: 1.3 };
-const OFF_ROAD_SURFACE: SurfaceState = { kind: "offRoad", gripMultiplier: 0.45, dragMultiplier: 2.2 };
+const OFF_ROAD_SURFACE: SurfaceState = { kind: "offRoad", gripMultiplier: 0.65, dragMultiplier: 1.6 };
 
 /** Meters beyond the paved edge that still count as "shoulder" before it's fully off-road. */
 const SHOULDER_MARGIN_METERS = 2;

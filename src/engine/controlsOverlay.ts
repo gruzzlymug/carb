@@ -8,7 +8,13 @@ const CONTROLS: Array<[string, string]> = [
   ["R", "Reset"],
 ];
 
-/** A plain DOM overlay listing the current controls — not part of the 3D scene, purely a display concern. */
+/**
+ * A plain DOM overlay listing the current controls — not part of the 3D
+ * scene, purely a display concern. Off by default (toggled from the debug
+ * panel); positioned above the always-on minimap (see minimap.ts) in the
+ * same bottom-left corner so the two stack instead of overlapping if both
+ * happen to be visible.
+ */
 export class ControlsOverlay {
   private readonly element: HTMLDivElement;
 
@@ -17,7 +23,7 @@ export class ControlsOverlay {
     this.element.style.cssText = `
       position: fixed;
       left: 12px;
-      bottom: 12px;
+      bottom: 190px;
       padding: 10px 14px;
       background: rgba(0, 0, 0, 0.65);
       color: #fff;

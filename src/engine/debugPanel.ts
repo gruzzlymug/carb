@@ -26,6 +26,8 @@ export function createDebugPanel(game: Game, controlsOverlay: ControlsOverlay): 
   telemetryFolder.add(game.telemetry, "wheelSteerDeg").name("Wheel Steer (°)").listen().disable();
   telemetryFolder.add(game.telemetry, "yawRateDeg").name("Yaw Rate (°/s)").listen().disable();
   telemetryFolder.add(game.telemetry, "lateralAccel").name("Lateral Accel (m/s²)").listen().disable();
+  telemetryFolder.add(game.telemetry, "desiredYawDeg").name("Desired Yaw (°/s)").listen().disable();
+  telemetryFolder.add(game.telemetry, "gripUtilization").name("Grip Utilization").listen().disable();
   telemetryFolder.add(game.telemetry, "turnRadius").name("Turn Radius (m)").listen().disable();
   telemetryFolder.add(game.telemetry, "cornerLimit").name("Corner Limit").listen().disable();
   telemetryFolder.add(game.telemetry, "shiftCutMs").name("Shift cut (ms)").listen().disable();
@@ -43,7 +45,7 @@ export function createDebugPanel(game: Game, controlsOverlay: ControlsOverlay): 
   controlsFolder
     .add(transmissionSettings, "mode", { Automatic: "automatic", Manual: "manual" })
     .name("Transmission");
-  const displayState = { showOverlay: true, engineSound: true, aiDriver: false };
+  const displayState = { showOverlay: false, engineSound: true, aiDriver: false };
   controlsFolder
     .add(displayState, "showOverlay")
     .name("Show Controls")

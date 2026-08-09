@@ -19,6 +19,8 @@ export interface TrackWorld {
   gasStations: GasStationPlacement[];
   spawn: { position: Vec3; headingRad: number };
   query: TrackQuery;
+  /** Dense centerline samples per loop (see trackSpline.ts) — e.g. for drawing a minimap outline. */
+  loops: SampledLoop[];
 }
 
 function randomGasStationInterval(): number {
@@ -73,5 +75,5 @@ export function buildTrackWorld(trackType: string): TrackWorld {
     headingRad: headingFromTangent(spawnSample.tangent),
   };
 
-  return { roadMesh, groundMesh, gasStations, spawn, query };
+  return { roadMesh, groundMesh, gasStations, spawn, query, loops: sampled.loops };
 }

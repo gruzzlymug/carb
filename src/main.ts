@@ -10,5 +10,5 @@ if (!canvas) {
 const game = new Game(canvas);
 game.start();
 
-const controlsOverlay = new ControlsOverlay();
+const controlsOverlay = new ControlsOverlay(false); // off by default; toggle from the debug panel
 createDebugPanel(game, controlsOverlay);
