@@ -2,6 +2,7 @@ import type { Mesh, Face } from "./mesh.js";
 import type { Vec3 } from "../math/vector3.js";
 import { perpendicular } from "../math/vector3.js";
 import type { SampledLoop } from "../world/trackSpline.js";
+import { curvatureAt } from "../world/trackSpline.js";
 import { ROAD_WIDTH, TRACK_GROUND_MARGIN } from "../util/constants.js";
 
 function offsetPoint(center: Vec3, perp: Vec3, distance: number, z: number): Vec3 {
@@ -18,6 +19,19 @@ const SURFACE_Z = 0;
 // GPU depth buffer doesn't have to break an exact tie between them.
 const MARKING_Z = 0.01;
 const DASH_ARC_LENGTH = 4; // meters per dash on/off interval
+
+// Kerbs: the classic red/white curbing along both edges of a corner, absent
+// on straights. Placed just outside the road's own paved edge (from
+// HALF_WIDTH out to HALF_WIDTH + KERB_WIDTH) rather than replacing the
+// white edge stripe, so both remain visible side by side.
+const KERB_COLOR_RED = "#c81e1e";
+const KERB_COLOR_WHITE = "#f0f0f0";
+const KERB_WIDTH = 0.5;
+const KERB_BLOCK_ARC_LENGTH = 2; // meters per red/white block
+// 1/meters; a corner tighter than a ~100m radius gets kerbs. Comfortably
+// catches every named corner in trackDefinitions.ts (tightest ~38m, widest
+// sweeper 95m) while staying off on straights (curvature ~0 there).
+const KERB_CURVATURE_THRESHOLD = 0.01;
 
 /**
  * True if `point` falls inside (an approximation of) any of `loops`'
@@ -108,6 +122,54 @@ function addRoadRibbon(vertices: Vec3[], faces: Face[], loop: SampledLoop, other
 }
 
 /**
+ * Extrudes red/white kerb blocks along both edges of one loop, but only
+ * where the track curves tighter than KERB_CURVATURE_THRESHOLD — a segment
+ * is included if either endpoint is in a corner, so the kerb's start/end
+ * doesn't cut off mid-block right at the threshold. Blocks alternate color
+ * by arc length (same technique as the dashed center line) and are
+ * suppressed against other loops' surfaces at a crossing, same as the edge
+ * stripes.
+ */
+function addKerbs(vertices: Vec3[], faces: Face[], loop: SampledLoop, otherLoops: SampledLoop[]): void {
+  const curvature = curvatureAt(loop);
+  const count = loop.samples.length;
+  const segmentCount = loop.closed ? count : count - 1;
+
+  for (let i = 0; i < segmentCount; i++) {
+    const nextIndex = (i + 1) % count;
+    if (Math.abs(curvature[i]) < KERB_CURVATURE_THRESHOLD && Math.abs(curvature[nextIndex]) < KERB_CURVATURE_THRESHOLD) {
+      continue;
+    }
+
+    const a = loop.samples[i];
+    const b = loop.samples[nextIndex];
+    const perpA = perpendicular(a.tangent);
+    const perpB = perpendicular(b.tangent);
+    const color = Math.floor(a.arcLength / KERB_BLOCK_ARC_LENGTH) % 2 === 0 ? KERB_COLOR_RED : KERB_COLOR_WHITE;
+
+    const leftInnerA = offsetPoint(a.center, perpA, HALF_WIDTH, MARKING_Z);
+    const leftOuterA = offsetPoint(a.center, perpA, HALF_WIDTH + KERB_WIDTH, MARKING_Z);
+    const leftInnerB = offsetPoint(b.center, perpB, HALF_WIDTH, MARKING_Z);
+    const leftOuterB = offsetPoint(b.center, perpB, HALF_WIDTH + KERB_WIDTH, MARKING_Z);
+    if (!isInsideAnySurface(leftOuterA, otherLoops) && !isInsideAnySurface(leftOuterB, otherLoops)) {
+      const leftBase = vertices.length;
+      vertices.push(leftOuterA, leftInnerA, leftInnerB, leftOuterB);
+      faces.push({ indices: [leftBase, leftBase + 1, leftBase + 2, leftBase + 3], color });
+    }
+
+    const rightInnerA = offsetPoint(a.center, perpA, -HALF_WIDTH, MARKING_Z);
+    const rightOuterA = offsetPoint(a.center, perpA, -(HALF_WIDTH + KERB_WIDTH), MARKING_Z);
+    const rightInnerB = offsetPoint(b.center, perpB, -HALF_WIDTH, MARKING_Z);
+    const rightOuterB = offsetPoint(b.center, perpB, -(HALF_WIDTH + KERB_WIDTH), MARKING_Z);
+    if (!isInsideAnySurface(rightOuterA, otherLoops) && !isInsideAnySurface(rightOuterB, otherLoops)) {
+      const rightBase = vertices.length;
+      vertices.push(rightInnerA, rightOuterA, rightOuterB, rightInnerB);
+      faces.push({ indices: [rightBase, rightBase + 1, rightBase + 2, rightBase + 3], color });
+    }
+  }
+}
+
+/**
  * Builds the combined road ribbon mesh for every loop in a track. Loops
  * are independent (see TrackDefinition's doc comment) — surfaces are
  * concatenated as-is (overlap is visually seamless), while each loop's
@@ -121,6 +183,7 @@ export function createRoadRibbonMesh(loops: SampledLoop[]): Mesh {
   for (let i = 0; i < loops.length; i++) {
     const otherLoops = loops.filter((_, j) => j !== i);
     addRoadRibbon(vertices, faces, loops[i], otherLoops);
+    addKerbs(vertices, faces, loops[i], otherLoops);
   }
   return { vertices, faces };
 }

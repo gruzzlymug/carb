@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import type { Vec3 } from "../math/vector3.js";
+import { angleDelta } from "../math/vector3.js";
 import type { TrackDefinition, TrackLoop } from "./trackDefinitions.js";
 import { TRACK_SAMPLE_SPACING } from "../util/constants.js";
 
@@ -56,4 +57,34 @@ function sampleLoop(loop: TrackLoop): SampledLoop {
 /** Samples every loop in a track independently (see TrackDefinition's doc comment on why loops are separate). */
 export function sampleTrack(track: TrackDefinition): SampledTrack {
   return { loops: track.loops.map(sampleLoop) };
+}
+
+function angleOf(v: Vec3): number {
+  return Math.atan2(v.x, v.y);
+}
+
+/**
+ * Finite-difference curvature (1/turn-radius, signed positive = turning
+ * left) at each sample of a loop, from its neighbors' tangent angles over
+ * arc length. Shared by trackQuery.ts (steering/AI queries) and
+ * graphics/trackMesh.ts (kerb placement) so both agree on "how sharp is
+ * this corner" from the same math.
+ */
+export function curvatureAt(loop: SampledLoop): number[] {
+  const { samples, totalLength, closed } = loop;
+  const count = samples.length;
+
+  return samples.map((_sample, i) => {
+    const prevIndex = i > 0 ? i - 1 : closed ? count - 1 : i;
+    const nextIndex = i < count - 1 ? i + 1 : closed ? 0 : i;
+    if (prevIndex === nextIndex) return 0;
+
+    const prev = samples[prevIndex];
+    const next = samples[nextIndex];
+    let arcSpan = next.arcLength - prev.arcLength;
+    if (closed && nextIndex < prevIndex) arcSpan += totalLength; // wrapped around the seam
+    if (arcSpan <= 0) return 0;
+
+    return angleDelta(angleOf(prev.tangent), angleOf(next.tangent)) / arcSpan;
+  });
 }
