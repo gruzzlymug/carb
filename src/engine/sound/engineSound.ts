@@ -1,4 +1,5 @@
 import type { CarConfig } from "../../util/cars/index.js";
+import { transmissionSettings } from "../../util/transmissionSettings.js";
 import { EngineTone } from "./engineTone.js";
 import { EngineCharacter, brightnessFor, detuneFor, saturationFor, highRpmOscLevelFor } from "./engineCharacter.js";
 import { ShiftTransient } from "./shiftTransient.js";
@@ -103,7 +104,9 @@ export class EngineSound {
     if (this.lastGear === null) {
       this.lastGear = gear;
     } else if (gear !== this.lastGear) {
-      this.shift.trigger(gear < this.lastGear, this.ctx.currentTime);
+      const isDownshift = gear < this.lastGear;
+      const kind = isDownshift ? (transmissionSettings.mode === "manual" ? "manualDownshift" : "automaticDownshift") : "upshift";
+      this.shift.trigger(kind, this.ctx.currentTime);
       this.lastGear = gear;
     }
 

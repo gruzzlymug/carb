@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { Player } from "../entities/player.js";
 import { transmissionSettings } from "../util/transmissionSettings.js";
 import { DEFAULT_CAR } from "../util/cars/index.js";
-import { PHYSICS_DT, controls, step } from "./helpers.js";
+import { PHYSICS_DT, controls, step, playerAtSpeed } from "./helpers.js";
 
 // transmissionSettings is shared, mutable module state (see util/transmissionSettings.ts) —
 // reset it after every test in this file so mode changes don't leak between tests.
@@ -32,6 +32,17 @@ describe("automatic transmission", () => {
     for (let i = 0; i < 30000; i++) {
       player.update(PHYSICS_DT, controls({ throttle: true }));
       assert.ok(player.gear >= 1 && player.gear <= 5, `gear ${player.gear} out of range`);
+    }
+  });
+
+  it("never exceeds redline RPM while braking down through the gears (automaticMaxDownshiftRpm safety valve)", () => {
+    const player = playerAtSpeed(80); // playerAtSpeed forces automatic mode
+    for (let i = 0; i < 6000 && player.speed > 0; i++) {
+      player.update(PHYSICS_DT, controls({ brake: true }));
+      assert.ok(
+        player.rpm <= DEFAULT_CAR.redlineRpm + 1e-6,
+        `automatic transmission should never exceed redlineRpm, got ${player.rpm} in gear ${player.gear}`
+      );
     }
   });
 });
@@ -65,5 +76,35 @@ describe("manual transmission", () => {
     step(player, stepsToClear, controls({}));
     assert.equal(player.shiftTorqueCutActive, false, "torque cut should have cleared by now");
     assert.equal(player.shiftTorqueCutRemainingMs, 0);
+  });
+
+  it("an aggressive downshift can briefly scream past the limiter, then settles back within it", () => {
+    transmissionSettings.mode = "manual";
+    const player = new Player();
+    player.gear = 5;
+    player.speed = 46; // ~103mph -- 4th gear's implied RPM here exceeds even limiterRpm
+
+    step(player, 1, controls({ shiftDown: true })); // 5 -> 4
+    assert.equal(player.gear, 4);
+    assert.ok(
+      player.rpm > DEFAULT_CAR.limiterRpm,
+      `expected the post-downshift scream to exceed limiterRpm (${DEFAULT_CAR.limiterRpm}), got ${player.rpm}`
+    );
+    assert.ok(player.rpm <= DEFAULT_CAR.maxTransmissionRpm + 1e-6, "should still be capped at maxTransmissionRpm");
+
+    // Coast through the settle window (downshiftSettleMs) plus margin.
+    const settleSteps = Math.ceil(DEFAULT_CAR.downshiftSettleMs / 1000 / PHYSICS_DT) + 5;
+    step(player, settleSteps, controls({}));
+
+    // From here on, the scream window has closed -- RPM should never exceed
+    // the ordinary limiter bounce ceiling again (redlineRpm/limiterRpm),
+    // even though it may still be pinned at the top of that bounce.
+    for (let i = 0; i < 60; i++) {
+      player.update(PHYSICS_DT, controls({}));
+      assert.ok(
+        player.rpm <= DEFAULT_CAR.limiterRpm + 1e-6,
+        `after the settle window, rpm should never exceed limiterRpm again, got ${player.rpm}`
+      );
+    }
   });
 });

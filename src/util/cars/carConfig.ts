@@ -149,7 +149,8 @@ export interface CarSoundConfig {
 
   readonly shift: {
     readonly upshift: { readonly duckFloor: number; readonly duckMs: number; readonly thumpHz: number; readonly thumpDecayS: number };
-    readonly downshift: {
+    /** Player-operated downshift (Q key) -- deliberately violent ("BRAAAAAAP"): sharp duck, higher/sharper thump, plus a blip. */
+    readonly manualDownshift: {
       readonly duckFloor: number;
       readonly duckMs: number;
       readonly thumpHz: number;
@@ -157,6 +158,13 @@ export interface CarSoundConfig {
       readonly blipStartHz: number;
       readonly blipEndHz: number;
       readonly blipS: number;
+    };
+    /** Gearbox-selected downshift (automatic mode) -- deliberately controlled ("BRRRP"): shallower duck, duller thump, no blip. */
+    readonly automaticDownshift: {
+      readonly duckFloor: number;
+      readonly duckMs: number;
+      readonly thumpHz: number;
+      readonly thumpDecayS: number;
     };
     readonly transientGain: number;
   };

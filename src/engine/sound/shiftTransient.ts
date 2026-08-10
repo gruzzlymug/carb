@@ -1,12 +1,16 @@
 import type { CarSoundConfig } from "../../util/cars/index.js";
 
+export type ShiftKind = "upshift" | "manualDownshift" | "automaticDownshift";
+
 /**
  * The felt "click" of a gear change: a brief gain duck on the main engine
- * chain plus a short percussive thump (and, for downshifts, an extra sharp
- * blip), fired the instant Player.gear changes. Independent of how the
- * continuous RPM->pitch mapping glides through the same shift, since that
- * alone reads as too smooth to notice. Tuning comes from the active car's
- * CarConfig.sound.shift.
+ * chain plus a short percussive thump (and, for a manual downshift, an
+ * extra sharp blip), fired the instant Player.gear changes. Independent of
+ * how the continuous RPM->pitch mapping glides through the same shift,
+ * since that alone reads as too smooth to notice. Manual vs. automatic
+ * downshifts use deliberately different profiles (see CarSoundConfig.shift)
+ * so a player-operated downshift reads as violent ("BRAAAAAAP") and a
+ * gearbox-selected one reads as controlled ("BRRRP", no blip).
  */
 export class ShiftTransient {
   readonly input: AudioNode;
@@ -33,32 +37,29 @@ export class ShiftTransient {
     this.output = duck;
   }
 
-  trigger(isDownshift: boolean, now: number): void {
-    const { upshift, downshift } = this.sound;
-    const duckFloor = isDownshift ? downshift.duckFloor : upshift.duckFloor;
-    const duckMs = isDownshift ? downshift.duckMs : upshift.duckMs;
+  trigger(kind: ShiftKind, now: number): void {
+    const profile = kind === "upshift" ? this.sound.upshift : kind === "manualDownshift" ? this.sound.manualDownshift : this.sound.automaticDownshift;
     const gain = this.duck.gain;
     gain.cancelScheduledValues(now);
     gain.setValueAtTime(gain.value, now);
-    gain.linearRampToValueAtTime(duckFloor, now + 0.008);
-    gain.linearRampToValueAtTime(1, now + duckMs / 1000);
+    gain.linearRampToValueAtTime(profile.duckFloor, now + 0.008);
+    gain.linearRampToValueAtTime(1, now + profile.duckMs / 1000);
 
-    const thumpHz = isDownshift ? downshift.thumpHz : upshift.thumpHz;
-    const thumpDecay = isDownshift ? downshift.thumpDecayS : upshift.thumpDecayS;
-    this.playTransient(now, thumpDecay, 1, () => {
+    this.playTransient(now, profile.thumpDecayS, 1, () => {
       const thump = this.ctx.createOscillator();
       thump.type = "sine";
-      thump.frequency.setValueAtTime(thumpHz * 1.3, now);
-      thump.frequency.exponentialRampToValueAtTime(thumpHz, now + 0.02);
+      thump.frequency.setValueAtTime(profile.thumpHz * 1.3, now);
+      thump.frequency.exponentialRampToValueAtTime(profile.thumpHz, now + 0.02);
       return thump;
     });
 
-    if (isDownshift) {
-      this.playTransient(now, downshift.blipS, 0.5, () => {
+    if (kind === "manualDownshift") {
+      const { blipStartHz, blipEndHz, blipS } = this.sound.manualDownshift;
+      this.playTransient(now, blipS, 0.5, () => {
         const blip = this.ctx.createOscillator();
         blip.type = "square";
-        blip.frequency.setValueAtTime(downshift.blipStartHz, now);
-        blip.frequency.exponentialRampToValueAtTime(downshift.blipEndHz, now + downshift.blipS);
+        blip.frequency.setValueAtTime(blipStartHz, now);
+        blip.frequency.exponentialRampToValueAtTime(blipEndHz, now + blipS);
         return blip;
       });
     }

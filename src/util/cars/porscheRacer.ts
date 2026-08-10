@@ -21,7 +21,7 @@ export const PORSCHE_RACER: CarConfig = {
   brakeForce: 20,
   handbrakeForce: 35,
   friction: 6,
-  engineBraking: 10,
+  engineBraking: 8, // was 10 -- combined with friction that read as unnaturally violent on an aggressive downshift; playtest variable, tune by feel
   topSpeedFalloff: 0.35,
 
   idleRpm: 900,
@@ -57,13 +57,13 @@ export const PORSCHE_RACER: CarConfig = {
   automaticCoastUpshiftRpm: 5600,
   automaticDownshiftRpm: 3350,
   automaticBrakeDownshiftRpm: 3900,
-  automaticKickdownRpm: 4450,
+  automaticKickdownRpm: 4600, // was 4450 -- a touch conservative once the powerband moved up with the 7800 redline
   automaticKickdownMinGain: 0.12,
   automaticMaxDownshiftRpm: 7600,
 
   manualShiftCooldownMs: 90,
   automaticShiftCooldownMs: 120,
-  downshiftSettleMs: 120,
+  downshiftSettleMs: 140, // was 120 -- within the 120-160ms sweet range for the over-redline "scream" before settling
   shiftRpmBlendMs: 90,
   shiftTorqueCutMs: 55,
   shiftTorqueCutFactor: 0.15,
@@ -165,7 +165,7 @@ export const PORSCHE_RACER: CarConfig = {
 
     shift: {
       upshift: { duckFloor: 0.15, duckMs: 55, thumpHz: 90, thumpDecayS: 0.07 },
-      downshift: {
+      manualDownshift: {
         duckFloor: 0.12,
         duckMs: 45,
         thumpHz: 130,
@@ -173,6 +173,15 @@ export const PORSCHE_RACER: CarConfig = {
         blipStartHz: 650,
         blipEndHz: 260,
         blipS: 0.03,
+      },
+      // Deliberately duller/gentler than manualDownshift and no blip -- a
+      // gearbox decision should read as controlled, not like the player
+      // yanked it down a gear.
+      automaticDownshift: {
+        duckFloor: 0.35,
+        duckMs: 60,
+        thumpHz: 100,
+        thumpDecayS: 0.06,
       },
       transientGain: 0.5,
     },
