@@ -183,7 +183,7 @@ export class Game {
     // motion is smooth even when the render rate differs from the physics rate.
     const alpha = this.accumulator / PHYSICS_DT;
     this.player.updateRenderPose(alpha);
-    this.playerView.sync(this.player);
+    this.playerView.sync(this.player, frameDt);
     this.cameraController.update(this.player.renderPosition);
     this.presentFrame();
     this.renderer.render(this.cameraController.camera);

@@ -98,6 +98,61 @@ function addCylinderX(
   }
 }
 
+/** A point in the wheel's circular (Y-Z) cross-section at a given local X. */
+function wheelCirclePoint(x: number, radius: number, angle: number): Vec3 {
+  return { x, y: radius * Math.cos(angle), z: radius * Math.sin(angle) };
+}
+
+/**
+ * Adds a "mag wheel" hub + spokes to one face of the wheel: a small N-gon
+ * hub disc plus `spokeCount` trapezoidal spokes reaching toward the rim,
+ * sitting a hair proud of the tire's own flat end-cap (so it doesn't
+ * z-fight with it). This is what makes rotation actually visible — a plain
+ * tire cylinder is a featureless circle from most angles.
+ *
+ * Winding follows addCylinderX's own end-cap convention: increasing-angle
+ * vertex order yields an outward normal toward +X, decreasing order toward
+ * -X — so `faceOutward` picks the order the same way `rightCap`/`leftCap` do.
+ */
+function addMagWheelFace(
+  vertices: Vec3[],
+  faces: Face[],
+  xFace: number,
+  faceOutward: 1 | -1,
+  spokeCount: number,
+  color: string
+): void {
+  const x = xFace + faceOutward * 0.01;
+  const hubRadius = WHEEL_RADIUS * 0.2;
+  const spokeInnerRadius = WHEEL_RADIUS * 0.22;
+  const spokeOuterRadius = WHEEL_RADIUS * 0.82;
+  const spokeHalfAngle = ((Math.PI * 2) / spokeCount) * 0.18;
+
+  const hubSegments = 8;
+  const hubBase = vertices.length;
+  for (let i = 0; i < hubSegments; i++) {
+    vertices.push(wheelCirclePoint(x, hubRadius, (i / hubSegments) * Math.PI * 2));
+  }
+  const hub: number[] = [];
+  for (let i = 0; i < hubSegments; i++) hub.push(hubBase + (faceOutward > 0 ? i : hubSegments - 1 - i));
+  faces.push({ indices: hub, color });
+
+  for (let s = 0; s < spokeCount; s++) {
+    const center = (s / spokeCount) * Math.PI * 2;
+    const a0 = center - spokeHalfAngle;
+    const a1 = center + spokeHalfAngle;
+    const base = vertices.length;
+    vertices.push(
+      wheelCirclePoint(x, spokeInnerRadius, a0),
+      wheelCirclePoint(x, spokeOuterRadius, a0),
+      wheelCirclePoint(x, spokeOuterRadius, a1),
+      wheelCirclePoint(x, spokeInnerRadius, a1)
+    );
+    const quad = faceOutward > 0 ? [base, base + 1, base + 2, base + 3] : [base + 3, base + 2, base + 1, base];
+    faces.push({ indices: quad, color });
+  }
+}
+
 /** Local-space wheel mount points on the car body, shared with the wheel radius/height. */
 export const WHEEL_RADIUS = 0.35;
 export const WHEEL_OFFSETS: Vec3[] = [
@@ -200,10 +255,16 @@ export function createWheel(): Mesh {
   const vertices: Vec3[] = [];
   const faces: Face[] = [];
   const tireColor = "#1a1a1a";
+  const magColor = "#b8b8b8";
   const width = 0.32;
   const segments = 8;
+  const spokeCount = 5;
 
   addCylinderX(vertices, faces, { x: 0, y: 0, z: 0 }, WHEEL_RADIUS, width, segments, tireColor);
+  // Mag-wheel spokes on both faces, proud of the tire's own end-caps, so
+  // rotation reads visually instead of the wheel looking like a static disc.
+  addMagWheelFace(vertices, faces, -width / 2, -1, spokeCount, magColor);
+  addMagWheelFace(vertices, faces, width / 2, 1, spokeCount, magColor);
 
   return { vertices, faces };
 }
