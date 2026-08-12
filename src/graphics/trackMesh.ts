@@ -9,6 +9,15 @@ function offsetPoint(center: Vec3, perp: Vec3, distance: number, z: number): Vec
   return { x: center.x + perp.x * distance, y: center.y + perp.y * distance, z };
 }
 
+/** Like offsetPoint, but offsets along both the tangent (forward/back) and its perpendicular (left/right) at once. */
+function offsetPoint2(center: Vec3, tangent: Vec3, perp: Vec3, alongTangent: number, alongPerp: number, z: number): Vec3 {
+  return {
+    x: center.x + tangent.x * alongTangent + perp.x * alongPerp,
+    y: center.y + tangent.y * alongTangent + perp.y * alongPerp,
+    z,
+  };
+}
+
 const SURFACE_COLOR = "#3a3a3a";
 const EDGE_COLOR = "#e8e8e8";
 const CENTER_COLOR = "#d8c840";
@@ -32,6 +41,15 @@ const KERB_BLOCK_ARC_LENGTH = 2; // meters per red/white block
 // catches every named corner in trackDefinitions.ts (tightest ~38m, widest
 // sweeper 95m) while staying off on straights (curvature ~0 there).
 const KERB_CURVATURE_THRESHOLD = 0.01;
+
+// Start/finish checkerboard: square black/white checks spanning the road,
+// centered on the loop's arc-length-0 point (where LapTracker's start/
+// finish crossing is detected).
+const CHECKER_ROWS = 4; // along the direction of travel
+const CHECKER_SQUARE_SIZE = ROAD_WIDTH / 8; // columns across the road are the same size, for square checks
+const CHECKER_COLS = Math.round(ROAD_WIDTH / CHECKER_SQUARE_SIZE);
+const CHECKER_COLOR_LIGHT = "#ffffff"; // deliberately distinct from KERB_COLOR_WHITE
+const CHECKER_COLOR_DARK = "#1a1a1a";
 
 /**
  * True if `point` falls inside (an approximation of) any of `loops`'
@@ -170,6 +188,42 @@ function addKerbs(vertices: Vec3[], faces: Face[], loop: SampledLoop, otherLoops
 }
 
 /**
+ * Extrudes a checkerboard start/finish line at a loop's arc-length-0 point
+ * (`loop.samples[0]` — the same point LapTracker treats as the start/finish
+ * crossing, and that spawn.ts places the car at). Built directly from that
+ * one sample's own center/tangent (not neighboring samples), so it's
+ * independent of TRACK_SAMPLE_SPACING — CHECKER_ROWS rows of
+ * CHECKER_SQUARE_SIZE-meter squares astride the point, CHECKER_COLS
+ * columns spanning the road width, alternating color in a checkerboard
+ * pattern. Quad winding matches addRoadRibbon's own convention (left-edge
+ * corner, right-edge corner, per "row", A then B) so it isn't backface-culled.
+ */
+function addStartFinishLine(vertices: Vec3[], faces: Face[], loop: SampledLoop): void {
+  const start = loop.samples[0];
+  const perp = perpendicular(start.tangent);
+  const totalDepth = CHECKER_ROWS * CHECKER_SQUARE_SIZE;
+
+  for (let row = 0; row < CHECKER_ROWS; row++) {
+    const alongA = -totalDepth / 2 + row * CHECKER_SQUARE_SIZE;
+    const alongB = alongA + CHECKER_SQUARE_SIZE;
+    for (let col = 0; col < CHECKER_COLS; col++) {
+      const left = HALF_WIDTH - col * CHECKER_SQUARE_SIZE;
+      const right = left - CHECKER_SQUARE_SIZE;
+      const color = (row + col) % 2 === 0 ? CHECKER_COLOR_LIGHT : CHECKER_COLOR_DARK;
+
+      const leftA = offsetPoint2(start.center, start.tangent, perp, alongA, left, MARKING_Z);
+      const rightA = offsetPoint2(start.center, start.tangent, perp, alongA, right, MARKING_Z);
+      const rightB = offsetPoint2(start.center, start.tangent, perp, alongB, right, MARKING_Z);
+      const leftB = offsetPoint2(start.center, start.tangent, perp, alongB, left, MARKING_Z);
+
+      const base = vertices.length;
+      vertices.push(leftA, rightA, rightB, leftB);
+      faces.push({ indices: [base, base + 1, base + 2, base + 3], color });
+    }
+  }
+}
+
+/**
  * Builds the combined road ribbon mesh for every loop in a track. Loops
  * are independent (see TrackDefinition's doc comment) — surfaces are
  * concatenated as-is (overlap is visually seamless), while each loop's
@@ -184,6 +238,11 @@ export function createRoadRibbonMesh(loops: SampledLoop[]): Mesh {
     const otherLoops = loops.filter((_, j) => j !== i);
     addRoadRibbon(vertices, faces, loops[i], otherLoops);
     addKerbs(vertices, faces, loops[i], otherLoops);
+  }
+  // Only loop 0 -- the one LapTracker actually times (see its own doc
+  // comment) and the one the spawn point sits on.
+  if (loops[0] && loops[0].samples.length > 0) {
+    addStartFinishLine(vertices, faces, loops[0]);
   }
   return { vertices, faces };
 }

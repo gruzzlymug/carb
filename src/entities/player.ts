@@ -8,50 +8,70 @@ import { transmissionSettings } from "../util/transmissionSettings.js";
 import { rpmForGear, accelerationMultiplierForGear, engineTorqueFraction } from "../util/engineModel.js";
 import type { CarConfig } from "../util/cars/index.js";
 import { DEFAULT_CAR } from "../util/cars/index.js";
+import { effectiveGrip, availableLateral } from "../util/vehicleDynamics.js";
+
+/** Why automaticGearFor picked the gear it did — surfaced as telemetry so hunting is visible/diagnosable instead of just felt. */
+export type AutomaticShiftReason = "upshift" | "downshift" | "kickdown" | "hold";
+
+export interface AutomaticGearDecision {
+  gear: number;
+  reason: AutomaticShiftReason;
+}
 
 /**
- * Picks the automatic gear one step at a time (never Neutral/Reverse). Three
- * behaviors, throttle/brake-aware so the box has character rather than being
- * a plain RPM selector:
+ * Picks the automatic gear one step at a time (never Neutral/Reverse), with
+ * explicit hysteresis so it settles on a decision instead of hunting between
+ * two adjacent gears:
  *
- *   - RPM too high         -> upshift (later, flat out; earlier when coasting)
- *   - RPM too low          -> downshift (sooner under braking)
- *   - Throttle + weak pull -> kickdown one gear, if a lower gear makes
- *                             meaningfully more torque and wouldn't overspeed
- *                             the engine (AUTOMATIC_MAX_DOWNSHIFT_RPM)
+ *   - RPM too high                    -> upshift (later, flat out; earlier
+ *                                         when coasting). No torque check:
+ *                                         more speed always eventually wants
+ *                                         a taller gear, and torque only
+ *                                         gets worse from upshifting, so an
+ *                                         RPM threshold alone is sufficient.
+ *   - RPM too low, OR throttle + weak
+ *     pull (kickdown)                 -> downshift, but ONLY if the lower
+ *                                         gear makes meaningfully
+ *                                         (automaticKickdownMinGain) more
+ *                                         torque and wouldn't overspeed the
+ *                                         engine (automaticMaxDownshiftRpm).
  *
- * Kickdown is the piece a threshold selector misses — it's why flooring it in
- * a tall gear at speed grabs a lower gear instead of lugging. The single-step
- * behavior plus the shift cooldown keep it from jumping several gears at once,
- * and the RPM ceiling keeps the automatic from ever doing the theatrical
- * over-redline downshift that manual mode is allowed.
+ * That torque-benefit gate used to apply only to kickdown; it now gates
+ * every downshift, so cruising right at the plain RPM threshold can't
+ * flicker between two gears that are functionally equivalent for the
+ * driver — the actual fix for gear hunting, not just a longer cooldown
+ * after the fact (see update()'s shiftCooldown, which still rate-limits how
+ * often ANY shift can happen, but no longer has to do all the work alone).
+ * The gate is safe even near a dead stop: as speed -> 0 every gear's RPM
+ * converges to idleRpm, so the torque comparison there reduces to
+ * gearAccelMultipliers' own ratio between adjacent gears — which the table
+ * (deliberately) already spaces further apart than automaticKickdownMinGain,
+ * so the cascade down to 1st gear when coming to a stop still happens.
  */
-function automaticGearFor(currentGear: number, speed: number, throttle: boolean, brake: boolean, car: CarConfig): number {
+function automaticGearFor(currentGear: number, speed: number, throttle: boolean, brake: boolean, car: CarConfig): AutomaticGearDecision {
   const gear = Math.max(1, Math.min(5, currentGear));
   const rpm = rpmForGear(gear, speed, car);
 
-  // Full-throttle kickdown: below the useful band, drop a gear if it pays off.
-  if (throttle && gear > 1 && rpm < car.automaticKickdownRpm) {
+  const upshiftRpm = throttle ? car.automaticUpshiftRpm : car.automaticCoastUpshiftRpm;
+  if (gear < 5 && rpm >= upshiftRpm) {
+    return { gear: gear + 1, reason: "upshift" };
+  }
+
+  const downshiftRpm = brake ? car.automaticBrakeDownshiftRpm : car.automaticDownshiftRpm;
+  const wantsKickdown = throttle && rpm < car.automaticKickdownRpm;
+  if (gear > 1 && (rpm <= downshiftRpm || wantsKickdown)) {
     const lowerGear = gear - 1;
     const lowerRpm = rpmForGear(lowerGear, speed, car);
     if (lowerRpm <= car.automaticMaxDownshiftRpm) {
       const currentTorque = accelerationMultiplierForGear(gear, car) * engineTorqueFraction(rpm, car);
       const lowerTorque = accelerationMultiplierForGear(lowerGear, car) * engineTorqueFraction(lowerRpm, car);
-      if (lowerTorque > currentTorque * (1 + car.automaticKickdownMinGain)) return lowerGear;
+      if (lowerTorque > currentTorque * (1 + car.automaticKickdownMinGain)) {
+        return { gear: lowerGear, reason: wantsKickdown ? "kickdown" : "downshift" };
+      }
     }
   }
 
-  const upshiftRpm = throttle ? car.automaticUpshiftRpm : car.automaticCoastUpshiftRpm;
-  const downshiftRpm = brake ? car.automaticBrakeDownshiftRpm : car.automaticDownshiftRpm;
-  if (gear < 5 && rpm >= upshiftRpm) return gear + 1;
-  if (gear > 1 && rpm <= downshiftRpm) return gear - 1;
-  return gear;
-}
-
-/** sqrt(max(0, grip^2 - longAccel^2)) at the given surface — the friction-circle budget left for cornering after longitudinal accel spends some of it. */
-function availableLateral(grip: number, surface: SurfaceState, longAccel: number): number {
-  const g = grip * surface.gripMultiplier;
-  return Math.sqrt(Math.max(0, g * g - longAccel * longAccel));
+  return { gear, reason: "hold" };
 }
 
 /**
@@ -70,11 +90,6 @@ function softSaturate(desired: number, threshold: number, hardCap: number): numb
   if (headroom <= 0) return sign * hardCap;
   const excess = magnitude - threshold;
   return sign * (threshold + headroom * (1 - Math.exp(-excess / headroom)));
-}
-
-function smoothstep(t: number): number {
-  const c = Math.max(0, Math.min(1, t));
-  return c * c * (3 - 2 * c);
 }
 
 /**
@@ -129,6 +144,37 @@ export class Player {
   private lastGripLimited = false; // yaw demand crossed the soft-knee threshold (understeer starting)
   private lastSteeringLimited = false; // at full lock but NOT grip-limited (out of steering angle)
   private lastTurnRadius = Infinity; // |speed / yawRate|, meters (Infinity when going straight)
+  private lastAutomaticDesiredGear = 1; // what automaticGearFor wants this frame, even if shiftCooldown is blocking it -- diagnostic for hunting
+  private lastAutomaticShiftReason: AutomaticShiftReason = "hold";
+  // Debounced throttle signal fed to automaticGearFor's shift-threshold
+  // selection ONLY (not the actual accel/brake physics) -- see
+  // CarConfig.automaticThrottleLiftDebounceMs. A true->false transition
+  // must persist for that long before this flips to false; false->true is
+  // immediate.
+  //
+  // Added after diagnosing AI-driven gear hunting on a technical track
+  // (Serpentine): a single 8.3ms throttle blip from AiDriver's bang-bang
+  // throttle was enough to swing automaticGearFor between the throttle-on
+  // (7350 RPM) and coast (5600 RPM) upshift thresholds — a ~1750 RPM
+  // regime change from one physics frame. This field's debounce fixed
+  // that specific failure (measured: 109 -> 69 shifts and 24 -> 12
+  // "oscillation clusters" over 2 laps on the Serpentine track, all of
+  // the pure-straight-line hunting eliminated, no lap-time regression).
+  //
+  // The remaining rapid-shift clusters (concentrated in the track's
+  // densest corner sequence) were investigated frame-by-frame and found
+  // to be legitimate: throttle is genuinely released for a sustained
+  // ~70ms+ (not a blip) as target speed drops into a corner, and
+  // kickdowns line up with real braking-induced RPM decay -- not the
+  // same operating point flip-flopping. util/vehicleDynamics.ts's
+  // maxAcceleration() (used only during racing-line/speed-profile
+  // generation) was confirmed to have no live wiring into this decision
+  // at all, so it can't be the cause either. Conclusion: a car with an
+  // automatic transmission WILL shift often through a genuinely dense,
+  // closely-spaced corner sequence -- that's correct behavior, not a bug
+  // to chase further.
+  private shiftThrottleState = true;
+  private throttleLiftMs = 0; // how long raw throttle has been continuously false, toward the debounce threshold
   // Fixed-step render interpolation: the pose at the START of the current
   // physics step, so a variable-rate render loop can blend toward the new pose
   // (see updateRenderPose) and stay smooth even when physics runs at a different Hz.
@@ -183,6 +229,10 @@ export class Player {
       if (controls.shiftDown) this.shiftDown();
     }
 
+    // Set only while coasting (see below) -- the magnitude of decel that
+    // should count against applySteering's friction circle, excluding
+    // engine braking.
+    let coastSteeringDecelOverride: number | null = null;
     const engaged = this.gear !== 0; // false only in Neutral
     const direction = this.gear === -1 ? -1 : 1;
 
@@ -236,37 +286,73 @@ export class Player {
       const engineBrakingFraction = engaged
         ? Math.max(0, Math.min(1, (rpmForGear(this.gear, this.speed, this.car) - this.car.idleRpm) / (this.car.redlineRpm - this.car.idleRpm)))
         : 0;
-      const frictionForce = this.car.friction * surface.dragMultiplier + this.car.engineBraking * engineBrakingFraction;
+      const baseDragForce = this.car.friction * surface.dragMultiplier;
+      const frictionForce = baseDragForce + this.car.engineBraking * engineBrakingFraction;
       this.speed -= Math.sign(this.speed) * frictionForce * dt;
       if (Math.abs(this.speed) < frictionForce * dt) this.speed = 0;
+      // Engine braking genuinely slows the car (above), but shouldn't also
+      // compete with cornering grip in applySteering's friction circle the
+      // way active braking/throttle do -- it's a drivetrain effect, not
+      // additional tire demand. Testing showed coast/engine-braking alone
+      // was eating ~1g of the friction circle while cornering, tightening
+      // corners far more than intended just from lifting off the throttle.
+      // Track only the base drag's contribution for the steering calc below.
+      coastSteeringDecelOverride = baseDragForce;
     }
     this.speed = Math.max(-this.car.maxReverseSpeed, Math.min(this.car.maxSpeed, this.speed));
     // Measured now (not at the end of update()): this is this step's actual
-    // longitudinal accel, needed below by applySteering's friction circle.
+    // longitudinal accel, for telemetry and (outside coasting) the value fed
+    // to applySteering's friction circle.
     const longAccel = dt > 0 ? (this.speed - speedBefore) / dt : 0;
     this.lastLongAccel = longAccel;
+    const steeringLongAccel = coastSteeringDecelOverride !== null ? Math.sign(longAccel) * coastSteeringDecelOverride : longAccel;
 
-    if (!manual && this.shiftCooldown <= 0) {
-      const target =
+    if (!manual) {
+      // Debounce the throttle signal used for shift-threshold selection
+      // (see shiftThrottleState's doc comment) -- a single-frame throttle
+      // lift shouldn't itself swing automaticGearFor between the
+      // throttle-on and coast RPM thresholds (a ~1750 RPM gap on this
+      // car). Lifting off requires automaticThrottleLiftDebounceMs of
+      // sustained release; getting back on throttle is immediate, since
+      // there's no hunting risk in promptly restoring the normal
+      // (higher, harder-to-reach) upshift threshold.
+      if (throttle) {
+        this.throttleLiftMs = 0;
+        this.shiftThrottleState = true;
+      } else {
+        this.throttleLiftMs += dt * 1000;
+        if (this.throttleLiftMs >= this.car.automaticThrottleLiftDebounceMs) {
+          this.shiftThrottleState = false;
+        }
+      }
+
+      // Computed every frame (not just when the cooldown allows acting on
+      // it) so lastDesiredGear/lastShiftReason telemetry always reflects
+      // what the automatic currently wants — visible evidence of hunting
+      // (desiredGear flickering while the cooldown holds actual gear still)
+      // even when the cooldown is masking it from the player.
+      const decision: AutomaticGearDecision =
         this.speed < -0.3
-          ? -1
-          : automaticGearFor(this.gear > 0 ? this.gear : 1, this.speed, throttle, brake, this.car);
-      if (target !== this.gear) {
-        if (target > this.gear) {
+          ? { gear: -1, reason: "downshift" }
+          : automaticGearFor(this.gear > 0 ? this.gear : 1, this.speed, this.shiftThrottleState, brake, this.car);
+      this.lastAutomaticDesiredGear = decision.gear;
+      this.lastAutomaticShiftReason = decision.reason;
+      if (this.shiftCooldown <= 0 && decision.gear !== this.gear) {
+        if (decision.gear > this.gear) {
           this.shiftBlendRemaining = this.shiftRpmBlendSeconds; // ease the RPM drop on an upshift
           this.shiftTorqueCutRemaining = this.shiftTorqueCutSeconds; // brief torque cut (upshift only)
         }
-        this.gear = target;
+        this.gear = decision.gear;
         this.shiftCooldown = this.automaticShiftCooldownSeconds;
       }
     }
     this.updateRpm(dt, throttle);
 
-    const steerInput = (steerRight ? 1 : 0) - (steerLeft ? 1 : 0);
+    const steerInput = controls.steerAxis ?? ((steerRight ? 1 : 0) - (steerLeft ? 1 : 0));
     // Wheels first: they deflect toward the input (eased), and that deflection
     // — not the raw key — is what steers the car.
     this.updateWheelSteer(dt, steerInput);
-    this.applySteering(dt, longAccel, handbrake, surface);
+    this.applySteering(dt, steeringLongAccel, handbrake, surface);
 
     // Along velocityHeading (direction of travel), not heading (nose direction) —
     // normally identical, but they diverge mid-slide (see applySteering).
@@ -368,42 +454,86 @@ export class Player {
   }
 
   /**
-   * Turns the car from the front-wheel deflection using a kinematic bicycle
+   * Turns the car from the front-wheel deflection via a curvature-first
    * model, softly capped by a friction circle:
    *
-   *   desired yaw       = (speed / wheelbase) * tan(wheel deflection)
+   *   wheelFraction         = wheelSteer / currentMaxWheelSteer   [-1..1, how much of this frame's authority is used]
+   *   geometricMaxCurvature = tan(wheelMaxSteerRad) / wheelbase   [constant: the parking-lot ceiling]
+   *   gripMaxCurvature      = (hardMaxYaw / speed) * curvatureHeadroom   [shrinks with speed; hardMaxYaw already nets out longAccel]
+   *   maxCurvature          = min(geometricMaxCurvature, gripMaxCurvature)
+   *   desiredYaw            = speed * (wheelFraction * maxCurvature)
+   *
+   * Earlier this fed raw `(speed / wheelbase) * tan(wheelSteer)` — geometric
+   * yaw demand — into the grip cap below. That demand grows with speed while
+   * the grip cap shrinks as 1/speed, so at any real driving speed the demand
+   * blew past the cap by 10-50x, meaning the soft knee below saturated in the
+   * first few degrees of wheel angle and the rest of the wheel's travel did
+   * nothing to the car's actual rotation — the "wheels spin independently of
+   * the car" bug. Expressing the demand as a *curvature* (1/turn-radius)
+   * scaled to what's actually achievable (`maxCurvature`) fixes that: full
+   * lock now demands only `curvatureHeadroom`x the grip limit (a small,
+   * constant overshoot, e.g. 1.2x) at any speed where grip binds, instead of
+   * an unbounded multiple, so the soft knee below has the top of the wheel's
+   * range to work with rather than just the first few degrees. At low speed
+   * `geometricMaxCurvature` binds instead (grip headroom is huge there),
+   * reproducing the old low-speed/parking behavior. `wheelFraction`'s
+   * division by `currentMaxWheelSteer` (this frame's speed-scaled lock, see
+   * updateWheelSteer) also cancels the speed-sensitive steering ratio out of
+   * this calculation entirely — that ratio now only shapes the *visible*
+   * wheel angle and the low-speed assist below, not this physics.
+   *
    *   available lateral = sqrt(max(0, grip² − longAccel²))     [availableLateral()]
    *   yaw cap           = available lateral / speed   (lateral accel = speed * yaw)
    *
-   * The geometry term means the car only turns while rolling and turns
-   * harder the faster it goes for a given lock. Unlike a hard clamp, the cap
-   * is progressive (softSaturate()): below car.chassis.steeringGrip's cap
-   * (scaled by steeringSaturationKnee) the geometry term passes through
-   * unshaped — "normal" cornering; beyond it, response eases toward the
-   * tireGrip-based physical ceiling instead of snapping straight to maximum.
-   * Accelerating or braking hard (`longAccel`, measured this same step) eats
-   * into the same budget via availableLateral, same for both grip values.
+   * Unlike a hard clamp, the cap is progressive (softSaturate()): below
+   * car.chassis.steeringGrip's cap (scaled by steeringSaturationKnee) the
+   * curvature term passes through unshaped — "normal" cornering; beyond it,
+   * response eases toward the tireGrip-based physical ceiling instead of
+   * snapping straight to maximum. Accelerating or braking hard (`longAccel`,
+   * measured this same step) eats into the same budget via availableLateral,
+   * same for both grip values.
    *
-   * Handbrake is a separate case: the rear tires lose grip, so cornering is no
-   * longer limited by the friction circle at all — yaw is driven almost
-   * directly by steering geometry, up to a bounded handbrakeMaxYawRate (a
-   * stability cap, not a tire limit). That's what lets the nose rotate faster
-   * than the car's momentum can follow — see the velocityHeading blend below,
-   * which is the actual slide. (The handbrake cap is not scaled by surface,
-   * and isn't part of this pass's progressive-saturation change — see
-   * ENGINE_ROADMAP.md item 5.)
+   * Handbrake is a separate case, and deliberately keeps the *old* raw
+   * geometric formula: the rear tires lose grip, so cornering is no longer
+   * limited by the friction circle at all — yaw is driven almost directly by
+   * steering geometry (not the grip-scaled curvature above, which would
+   * undermine the point), up to a bounded handbrakeMaxYawRate (a stability
+   * cap, not a tire limit). That's what lets the nose rotate faster than the
+   * car's momentum can follow — see the velocityHeading blend below, which
+   * is the actual slide. (The handbrake cap is not scaled by surface, and
+   * isn't part of this pass's changes — see ENGINE_ROADMAP.md item 5.)
    *
    * `surface.gripMultiplier` scales both grip values, so off-road/shoulder
    * driving washes out into understeer at a much lower speed than on the
    * paved surface, same shape of behavior, just less grip to spend.
    *
-   * On top of the friction-circle result: a small low-speed arcade yaw
-   * assist (proportional to wheel angle, fading out by
-   * lowSpeedAssistMaxSpeed) so parking-lot-speed turns — and reversing,
-   * where this matters most — rotate the car noticeably instead of the
-   * geometry term's naturally-near-zero yaw at low speed. Reverse is then
-   * separately capped at reverseMaxYawRate rather than inheriting whatever
-   * the forward friction-circle math (plus the assist) produces.
+   * `longAccel` here is `steeringLongAccel` from update() — the same
+   * measured longitudinal accel EXCEPT while coasting, where it excludes
+   * engine braking's contribution (see update()'s coastSteeringDecelOverride).
+   * Testing found engine braking alone was consuming ~1g of the friction
+   * circle while cornering, tightening every corner far more than intended
+   * just from lifting off the throttle; active braking/accelerating still
+   * count fully, since those are real driver-chosen tire demand.
+   *
+   * `chassis.gripBonusCurve` adds a speed-scaled "downforce" bonus to both
+   * tireGrip and steeringGrip *before* the friction-circle calc above (not
+   * as a separate additive yaw term afterward) — ~0 through parking/mid
+   * speed (60-100mph testing showed the car using nearly all of base
+   * tireGrip well before reaching highway speed, so low/mid-speed corners
+   * keep today's tuning untouched), ramping up at highway speed where the
+   * base grip alone left corners far wider than the game wants.
+   *
+   * No separate low-speed assist: `geometricMaxCurvature` above is already a
+   * fixed, finite ceiling (not derived from grip, so it doesn't shrink to
+   * nothing as speed drops), and since `desiredYaw = speed * curvature`, low
+   * speed naturally produces smoothly-scaled-down yaw — proportional to how
+   * far the car has actually rolled, not to how long the input's been held.
+   * An earlier pass added a time-based assist here to make parking-lot
+   * maneuvering feel responsive; measurement showed it let a car pumping the
+   * throttle to creep (covering almost no ground) rack up 50°+ of rotation
+   * in a few seconds — turning without traveling. Removed; reverse is still
+   * separately capped at reverseMaxYawRate so it can't inherit an
+   * unreasonably large yaw from the forward friction-circle math.
    */
   private applySteering(dt: number, longAccel: number, handbrake: boolean, surface: SurfaceState): void {
     if (this.wheelSteer === 0) {
@@ -418,28 +548,27 @@ export class Player {
       return;
     }
     const chassis = this.car.chassis;
-    const desiredYaw = (this.speed / chassis.wheelbase) * Math.tan(this.wheelSteer);
     const speedDivisor = Math.max(Math.abs(this.speed), 1);
-    const softMaxYaw = availableLateral(chassis.steeringGrip, surface, longAccel) / speedDivisor;
-    const hardMaxYaw = availableLateral(chassis.tireGrip, surface, longAccel) / speedDivisor;
+    const softMaxYaw = availableLateral(effectiveGrip(chassis.steeringGrip, this.speed, this.car), surface, longAccel) / speedDivisor;
+    const hardMaxYaw = availableLateral(effectiveGrip(chassis.tireGrip, this.speed, this.car), surface, longAccel) / speedDivisor;
 
     let yawRate: number;
+    let desiredYaw: number;
     if (handbrake) {
+      desiredYaw = (this.speed / chassis.wheelbase) * Math.tan(this.wheelSteer);
       yawRate = Math.max(-chassis.handbrakeMaxYawRate, Math.min(chassis.handbrakeMaxYawRate, desiredYaw));
     } else {
+      const wheelFraction = this.wheelSteer / this.currentMaxWheelSteer;
+      const geometricMaxCurvature = Math.tan(chassis.wheelMaxSteerRad) / chassis.wheelbase;
+      // Reuses hardMaxYaw (not a fresh tireGrip/speed² calc) so this stays
+      // consistent with the same longAccel-reduced budget the saturation
+      // step below checks against -- otherwise braking/accelerating while
+      // turning would make full lock's demand drift away from
+      // curvatureHeadroom instead of tracking it.
+      const gripMaxCurvature = (hardMaxYaw / speedDivisor) * chassis.curvatureHeadroom;
+      const maxCurvature = Math.min(geometricMaxCurvature, gripMaxCurvature);
+      desiredYaw = this.speed * (wheelFraction * maxCurvature);
       yawRate = softSaturate(desiredYaw, softMaxYaw * chassis.steeringSaturationKnee, hardMaxYaw);
-    }
-
-    // Low-speed arcade assist: only while actually rolling (this.speed !== 0)
-    // -- a fully stopped car doesn't pivot on its own, so this boosts yaw
-    // authority while creeping at parking speed rather than spinning a
-    // stationary car in place. Direction follows gear, not raw speed sign
-    // (which is ~0 exactly where creeping matters most — e.g. starting to
-    // back up from a dead stop).
-    if (this.speed !== 0) {
-      const direction = this.gear === -1 ? -1 : 1;
-      const assistFade = smoothstep(1 - Math.min(1, Math.abs(this.speed) / chassis.lowSpeedAssistMaxSpeed));
-      yawRate += direction * (this.wheelSteer / chassis.wheelMaxSteerRad) * chassis.lowSpeedAssistMaxYawRate * assistFade;
     }
 
     if (this.speed < 0) yawRate = Math.max(-chassis.reverseMaxYawRate, Math.min(chassis.reverseMaxYawRate, yawRate));
@@ -497,6 +626,16 @@ export class Player {
   /** Uncapped RPM implied by the current gear/speed alone — the raw value this.rpm is clamped from, for debug telemetry. */
   get targetRpm(): number {
     return this.gear === 0 ? this.rpm : rpmForGear(this.gear, this.speed, this.car);
+  }
+
+  /** What the automatic transmission wants this frame — equals `gear` once shiftCooldown allows acting on it; differs from it (visibly, in telemetry) if the cooldown is currently blocking a shift. Manual mode: always equals `gear`. Debug telemetry. */
+  get desiredGear(): number {
+    return transmissionSettings.mode === "manual" ? this.gear : this.lastAutomaticDesiredGear;
+  }
+
+  /** Why the automatic transmission's desiredGear is what it is this frame ("upshift"/"downshift"/"kickdown"/"hold"). Manual mode: always "hold". Debug telemetry. */
+  get shiftReason(): AutomaticShiftReason {
+    return transmissionSettings.mode === "manual" ? "hold" : this.lastAutomaticShiftReason;
   }
 
   /** This gear's acceleration multiplier — 0 in Neutral, for debug telemetry. */
@@ -588,6 +727,8 @@ export class Player {
     this.downshiftSettleRemaining = 0;
     this.shiftBlendRemaining = 0;
     this.shiftTorqueCutRemaining = 0;
+    this.shiftThrottleState = true;
+    this.throttleLiftMs = 0;
     this.wheelSteer = 0;
     // Collapse interpolation history onto the new pose so we don't tween across
     // the teleport, then place the visuals immediately.

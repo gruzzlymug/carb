@@ -1,6 +1,8 @@
 import type { CameraController } from "./CameraController.js";
 import { OrthographicCameraController } from "./OrthographicCameraController.js";
 import { PerspectiveCameraController } from "./PerspectiveCameraController.js";
+import { TopDownCameraController } from "./TopDownCameraController.js";
+import { ThirdPersonCameraController } from "./ThirdPersonCameraController.js";
 
 export type { CameraController };
 export { cameraSettings } from "./cameraSettings.js";
@@ -13,6 +15,8 @@ export { cameraSettings } from "./cameraSettings.js";
 export const CAMERA_TYPES: Record<string, () => CameraController> = {
   orthographic: () => new OrthographicCameraController(),
   perspective: () => new PerspectiveCameraController(),
+  topDown: () => new TopDownCameraController(),
+  thirdPerson: () => new ThirdPersonCameraController(),
 };
 
 export const DEFAULT_CAMERA_TYPE = "orthographic";

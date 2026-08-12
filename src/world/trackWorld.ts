@@ -6,6 +6,9 @@ import { TRACK_GENERATORS, DEFAULT_TRACK_TYPE } from "./trackDefinitions.js";
 import { sampleTrack, type SampledLoop } from "./trackSpline.js";
 import { buildTrackQuery, type TrackQuery } from "./trackQuery.js";
 import { ROAD_WIDTH, GAS_STATION_MIN_INTERVAL_METERS, GAS_STATION_MAX_INTERVAL_METERS } from "../util/constants.js";
+import { generateRacingLine, type RacingLine } from "./racingLine.js";
+import { generateSpeedProfile, type SpeedProfile } from "./speedProfile.js";
+import { DEFAULT_CAR } from "../util/cars/index.js";
 
 export interface GasStationPlacement {
   position: Vec3;
@@ -21,6 +24,10 @@ export interface TrackWorld {
   query: TrackQuery;
   /** Dense centerline samples per loop (see trackSpline.ts) — e.g. for drawing a minimap outline. */
   loops: SampledLoop[];
+  /** Precomputed once for loop 0 only (the loop LapTracker times and the spawn point sits on) — see racingLine.ts. */
+  racingLine: RacingLine;
+  /** Paired with racingLine, same loop-0-only scope — see speedProfile.ts. */
+  speedProfile: SpeedProfile;
 }
 
 function randomGasStationInterval(): number {
@@ -75,5 +82,8 @@ export function buildTrackWorld(trackType: string): TrackWorld {
     headingRad: headingFromTangent(spawnSample.tangent),
   };
 
-  return { roadMesh, groundMesh, gasStations, spawn, query, loops: sampled.loops };
+  const racingLine = generateRacingLine(sampled.loops[0], DEFAULT_CAR);
+  const speedProfile = generateSpeedProfile(racingLine, DEFAULT_CAR);
+
+  return { roadMesh, groundMesh, gasStations, spawn, query, loops: sampled.loops, racingLine, speedProfile };
 }

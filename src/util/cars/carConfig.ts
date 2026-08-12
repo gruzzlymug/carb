@@ -51,6 +51,17 @@ export interface CarConfig {
   // Shift feel/timing (not RPM-dependent).
   readonly manualShiftCooldownMs: number;
   readonly automaticShiftCooldownMs: number;
+  /**
+   * How long raw throttle must stay released before the automatic
+   * transmission's shift logic treats the driver as actually coasting
+   * (switching automaticUpshiftRpm -> automaticCoastUpshiftRpm etc.) — a
+   * single-frame throttle blip (e.g. from an AI driver's bang-bang
+   * throttle reacting to a speed profile that isn't perfectly monotonic)
+   * shouldn't itself be enough to flip a 1000+ RPM shift-threshold regime.
+   * Re-engaging throttle restores the throttle-on thresholds immediately,
+   * no debounce — see Player.update.
+   */
+  readonly automaticThrottleLiftDebounceMs: number;
   readonly downshiftSettleMs: number; // how long a downshift may show RPM above redline before the limiter bounce takes over
   readonly shiftRpmBlendMs: number; // eases displayed RPM down after an upshift instead of teleporting
   readonly shiftTorqueCutMs: number; // brief post-upshift torque interruption window
@@ -72,6 +83,14 @@ export interface CarChassisConfig {
   readonly tireGrip: number; // meters/second^2, physical peak lateral accel ("hard cap")
   readonly steeringGrip: number; // meters/second^2, "comfortable" grip -- always <= tireGrip; drives the soft-knee threshold
   readonly steeringSaturationKnee: number; // fraction of the steeringGrip-based yaw cap below which response is linear
+  readonly curvatureHeadroom: number; // how far full-lock's demanded curvature is allowed to exceed the grip-limited curvature (e.g. 1.2 = 20% over) -- gives the soft knee room to shape the top of the wheel's range instead of the demand blowing past the cap by 10-50x
+  // Speed-scaled "downforce" bonus, added to both tireGrip and steeringGrip
+  // before the friction-circle calc (not a separate additive yaw bonus) --
+  // ~0 at low speed (parking/mid-speed corners keep today's tuning), grows
+  // through the high-speed range where 60-100mph testing showed the base
+  // tireGrip alone leaves corners far wider than the game wants. See
+  // applySteering for how it's applied.
+  readonly gripBonusCurve: ReadonlyArray<readonly [number, number]>; // [speed m/s, bonus m/s^2]
   readonly handbrakeMaxYawRate: number; // rad/s, stability cap once the handbrake bypasses the friction circle
   readonly slipRecoveryPerSec: number; // velocityHeading->heading catch-up rate, off the handbrake
   readonly slipHoldPerSec: number; // velocityHeading->heading catch-up rate, while the handbrake is held
@@ -79,8 +98,6 @@ export interface CarChassisConfig {
   readonly wheelMaxSteerRad: number; // front-wheel yaw at full lock, before the speed-sensitive ratio
   readonly wheelSteerSmoothPerSec: number; // physical wheel-response rate (unaffected by the speed-sensitive ratio)
   readonly steeringRatioCurve: ReadonlyArray<readonly [number, number]>; // [speed m/s, fraction of wheelMaxSteerRad]
-  readonly lowSpeedAssistMaxSpeed: number; // meters/second; the arcade yaw assist is ~0 at/above this
-  readonly lowSpeedAssistMaxYawRate: number; // rad/s, at full wheel angle and zero speed
   readonly reverseMaxYawRate: number; // rad/s, hard cap whenever speed < 0
 }
 

@@ -2,6 +2,7 @@ import { Input } from "./input.js";
 import { readControlState } from "./controlState.js";
 import { Renderer } from "./renderer.js";
 import { TrackView } from "./trackView.js";
+import { RacingLineView } from "./racingLineView.js";
 import { Hud } from "./hud.js";
 import { Minimap } from "./minimap.js";
 import { EngineSound } from "./sound/engineSound.js";
@@ -10,6 +11,9 @@ import { Player } from "../entities/player.js";
 import { PlayerView } from "../entities/playerView.js";
 import { buildTrackWorld, type TrackWorld } from "../world/trackWorld.js";
 import type { TrackQuery } from "../world/trackQuery.js";
+import type { SampledLoop } from "../world/trackSpline.js";
+import type { RacingLine } from "../world/racingLine.js";
+import type { SpeedProfile } from "../world/speedProfile.js";
 import { classifySurface } from "../world/surfaceState.js";
 import { DEFAULT_TRACK_TYPE } from "../world/trackDefinitions.js";
 import { LapTracker } from "../gameplay/lapTracker.js";
@@ -31,6 +35,8 @@ export interface Telemetry {
   targetRpm: number;
   engineTorque: number; // 0..1 from the torque curve at the current drivetrain RPM
   gearMultiplier: number; // gear torque multiplier
+  desiredGear: string; // what the automatic transmission wants this frame -- differs from `gear` if shiftCooldown is currently blocking it
+  shiftReason: string; // "upshift" / "downshift" / "kickdown" / "hold"
   longAccel: number; // longitudinal acceleration, m/s^2 (negative under braking)
   wheelSteerDeg: number; // front-wheel deflection, degrees
   yawRateDeg: number; // deg/s
@@ -61,6 +67,8 @@ export class Game {
     targetRpm: 0,
     engineTorque: 0,
     gearMultiplier: 0,
+    desiredGear: "1",
+    shiftReason: "hold",
     longAccel: 0,
     wheelSteerDeg: 0,
     yawRateDeg: 0,
@@ -85,6 +93,7 @@ export class Game {
   private readonly input = new Input();
   private readonly renderer: Renderer;
   private readonly trackView: TrackView;
+  private readonly racingLineView: RacingLineView;
   private readonly player = new Player();
   private readonly playerView = new PlayerView();
   private readonly hud = new Hud(this.player.car.redlineRpm, this.player.car.recommendedShiftRpm);
@@ -103,11 +112,18 @@ export class Game {
   /** Always assigned in the constructor via setTrackType before the loop starts. */
   private trackQuery!: TrackQuery;
   /** Always assigned in the constructor via setTrackType before the loop starts. */
+  private racingLine!: RacingLine;
+  /** Always assigned in the constructor via setTrackType before the loop starts. */
+  private speedProfile!: SpeedProfile;
+  /** Always assigned in the constructor via setTrackType before the loop starts. */
   private lapTracker!: LapTracker;
+  /** Current track's loops, re-handed to a camera's setTrackBounds whenever the camera type changes (e.g. switching to topDown after a track is already loaded). */
+  private trackLoops: readonly SampledLoop[] = [];
 
   constructor(canvas: HTMLCanvasElement) {
     this.renderer = new Renderer(canvas);
     this.trackView = new TrackView(this.renderer.scene);
+    this.racingLineView = new RacingLineView(this.renderer.scene);
     this.renderer.scene.add(this.playerView.object3D);
 
     this.cameraController = CAMERA_TYPES[DEFAULT_CAMERA_TYPE]();
@@ -136,22 +152,33 @@ export class Game {
     this.aiDriverEnabled = enabled;
   }
 
+  /** Toggles the racing-line/speed-profile debug ribbon, e.g. from the debug panel. */
+  setRacingLineVisible(visible: boolean): void {
+    this.racingLineView.setVisible(visible);
+  }
+
   /** Swaps the active camera controller, e.g. from the debug panel. */
   setCameraType(type: string): void {
     const factory = CAMERA_TYPES[type];
     if (!factory) return;
     this.cameraController = factory();
     this.cameraController.resize(this.canvasWidth, this.canvasHeight);
+    this.cameraController.setTrackBounds?.(this.trackLoops);
   }
 
   /** Rebuilds the track and respawns the player at its start, e.g. from the debug panel. */
   setTrackType(type: string): void {
     const world = buildTrackWorld(type);
     this.trackView.show(world);
+    this.racingLineView.show(world.racingLine, world.speedProfile);
     this.spawn = world.spawn;
     this.trackQuery = world.query;
+    this.racingLine = world.racingLine;
+    this.speedProfile = world.speedProfile;
     this.lapTracker = new LapTracker(this.trackQuery);
+    this.trackLoops = world.loops;
     this.minimap.setTrack(world.loops);
+    this.cameraController.setTrackBounds?.(world.loops);
     this.player.respawn(this.spawn.position, this.spawn.headingRad);
   }
 
@@ -184,7 +211,7 @@ export class Game {
     const alpha = this.accumulator / PHYSICS_DT;
     this.player.updateRenderPose(alpha);
     this.playerView.sync(this.player, frameDt);
-    this.cameraController.update(this.player.renderPosition);
+    this.cameraController.update(this.player.renderPosition, this.player.renderHeading);
     this.presentFrame();
     this.renderer.render(this.cameraController.camera);
 
@@ -198,7 +225,7 @@ export class Game {
       this.lapTracker.reset();
     }
     const controls = this.aiDriverEnabled
-      ? this.aiDriver.computeControls(this.player, this.trackQuery)
+      ? this.aiDriver.computeControls(this.player, this.trackQuery, this.racingLine, this.speedProfile)
       : readControlState(this.input);
     const surface = classifySurface(this.trackQuery.nearestPoint(this.player.position).distance);
     this.lastThrottle = controls.throttle;
@@ -219,6 +246,8 @@ export class Game {
     this.telemetry.targetRpm = Math.round(this.player.targetRpm);
     this.telemetry.engineTorque = Math.round(this.player.engineTorque * 100) / 100;
     this.telemetry.gearMultiplier = Math.round(this.player.accelMultiplier * 100) / 100;
+    this.telemetry.desiredGear = this.player.desiredGear === -1 ? "R" : this.player.desiredGear === 0 ? "N" : String(this.player.desiredGear);
+    this.telemetry.shiftReason = this.player.shiftReason;
     this.telemetry.longAccel = Math.round(this.player.longitudinalAccel * 100) / 100;
     this.telemetry.wheelSteerDeg = Math.round(this.player.wheelSteerDeg);
     this.telemetry.yawRateDeg = Math.round(this.player.yawRateDeg);

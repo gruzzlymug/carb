@@ -11,6 +11,15 @@ export interface ControlState {
   readonly brake: boolean;
   readonly steerLeft: boolean;
   readonly steerRight: boolean;
+  /**
+   * Optional continuous steer input, -1..1 (positive = right, matching
+   * steerRight/steerLeft's sign convention), for controllers that can
+   * produce one — currently just AiDriver's SteeringController (see
+   * gameplay/steeringController.ts). Never set by readControlState:
+   * keyboard input stays digital. When present, Player.update() uses it
+   * instead of deriving steer input from steerLeft/steerRight.
+   */
+  readonly steerAxis?: number;
   readonly handbrake: boolean;
   readonly shiftUp: boolean;
   readonly shiftDown: boolean;

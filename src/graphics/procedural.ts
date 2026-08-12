@@ -170,6 +170,59 @@ interface HullRing {
   zTop: number;
 }
 
+/** One of a HullRing's 4 corners, in the same order addHull itself pushes them: 0 bottom-left, 1 bottom-right, 2 top-right, 3 top-left. */
+function hullCorner(ring: HullRing, which: 0 | 1 | 2 | 3): Vec3 {
+  const x = which === 0 || which === 3 ? -ring.halfWidth : ring.halfWidth;
+  const z = which === 0 || which === 1 ? ring.zBottom : ring.zTop;
+  return { x, y: ring.y, z };
+}
+
+function lerp3(a: Vec3, b: Vec3, t: number): Vec3 {
+  return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t, z: a.z + (b.z - a.z) * t };
+}
+
+/** Outward unit normal of the (planar) quad a->b->c, via the standard cross-product. */
+function quadNormal(a: Vec3, b: Vec3, c: Vec3): Vec3 {
+  const ux = b.x - a.x, uy = b.y - a.y, uz = b.z - a.z;
+  const vx = c.x - a.x, vy = c.y - a.y, vz = c.z - a.z;
+  const nx = uy * vz - uz * vy;
+  const ny = uz * vx - ux * vz;
+  const nz = ux * vy - uy * vx;
+  const len = Math.hypot(nx, ny, nz) || 1;
+  return { x: nx / len, y: ny / len, z: nz / len };
+}
+
+/**
+ * Adds a smaller glass quad inset within a body panel quad, so a window
+ * reads as glass set into a painted frame (pillars/sill/roofline) instead
+ * of covering the whole panel. `corners` are in the same winding order as
+ * the panel's own face; `insetStart0/insetEnd0` trim fractionally (0..0.5)
+ * along the corners[0]->corners[1] direction, `insetStart1/insetEnd1` along
+ * corners[0]->corners[3]. Offset a hair along the panel's own normal so it
+ * doesn't z-fight with the body panel beneath.
+ */
+function addWindowInset(
+  vertices: Vec3[],
+  faces: Face[],
+  corners: readonly [Vec3, Vec3, Vec3, Vec3],
+  insetStart0: number,
+  insetEnd0: number,
+  insetStart1: number,
+  insetEnd1: number,
+  color: string
+): void {
+  const [c0, c1, c2, c3] = corners;
+  const normal = quadNormal(c0, c1, c2);
+  const offset = 0.01;
+  const at = (t0: number, t1: number): Vec3 => {
+    const p = lerp3(lerp3(c0, c1, t0), lerp3(c3, c2, t0), t1);
+    return { x: p.x + normal.x * offset, y: p.y + normal.y * offset, z: p.z + normal.z * offset };
+  };
+  const base = vertices.length;
+  vertices.push(at(insetStart0, insetStart1), at(1 - insetEnd0, insetStart1), at(1 - insetEnd0, 1 - insetEnd1), at(insetStart0, 1 - insetEnd1));
+  faces.push({ indices: [base, base + 1, base + 2, base + 3], color });
+}
+
 /**
  * Builds a low-poly sports-car-style hull: a tapered body lofted through
  * a handful of cross-sections (rear bumper -> cabin -> hood -> nose),
@@ -232,16 +285,70 @@ export function createCar(): Mesh {
     { y: 1.9, halfWidth: 0.5, zBottom: 0.2, zTop: 0.35 }, // nose
   ];
 
-  // Gap 0 (rear bumper -> cabin back) = rear window slope.
-  // Gap 1 (cabin back -> cabin front) = roof, with glass side windows.
-  // Gap 2 (cabin front -> hood base) = windshield slope.
+  // Gap 0 (rear bumper -> cabin back) = rear window slope (painted, glass inset below).
+  // Gap 1 (cabin back -> cabin front) = roof, with side windows inset below.
+  // Gap 2 (cabin front -> hood base) = windshield slope (painted, glass inset below).
   // Gaps 3-4 (hood -> nose) = plain bodywork.
-  addHull(vertices, faces, rings, (gap, side) => {
-    if ((gap === 0 || gap === 2) && side === "top") return glassColor;
-    if (gap === 1 && side === "top") return roofColor;
-    if (gap === 1 && (side === "left" || side === "right")) return glassColor;
-    return bodyColor;
-  });
+  // Every panel is painted body/roof color at the hull level — window glass
+  // is added afterward as smaller quads inset within these panels (see
+  // addWindowInset), so each window reads as glass set into a frame
+  // (pillars/sill/roofline) rather than covering the whole panel.
+  addHull(vertices, faces, rings, (gap, side) => (gap === 1 && side === "top" ? roofColor : bodyColor));
+
+  // Rear window: inset from the rear-bumper/cabin-back panel (gap 0, top).
+  // corners[0]/[1] are the ring0 (trunk lip) edge, corners[2]/[3] the ring1
+  // (roofline) edge -- more margin at the trunk lip than the roofline.
+  addWindowInset(
+    vertices,
+    faces,
+    [hullCorner(rings[0], 3), hullCorner(rings[0], 2), hullCorner(rings[1], 2), hullCorner(rings[1], 3)],
+    0.16,
+    0.16,
+    0.3,
+    0.1,
+    glassColor
+  );
+
+  // Windshield: inset from the cabin-front/hood-base panel (gap 2, top).
+  // corners[0]/[1] are the ring2 (roofline) edge, corners[2]/[3] the ring3
+  // (hood/cowl) edge -- more margin at the hood/cowl side than the roofline.
+  addWindowInset(
+    vertices,
+    faces,
+    [hullCorner(rings[2], 3), hullCorner(rings[2], 2), hullCorner(rings[3], 2), hullCorner(rings[3], 3)],
+    0.14,
+    0.14,
+    0.08,
+    0.3,
+    glassColor
+  );
+
+  // Side windows: inset from the cabin side panels (gap 1, left/right). A
+  // tall door/sill margin at the bottom, a slim pillar front/back, a thin
+  // roofline margin at the top.
+  addWindowInset(
+    vertices,
+    faces,
+    [hullCorner(rings[1], 0), hullCorner(rings[1], 3), hullCorner(rings[2], 3), hullCorner(rings[2], 0)],
+    0.4,
+    0.08,
+    0.15,
+    0.15,
+    glassColor
+  );
+  // Right face's winding runs front-to-back first, then bottom-to-top (the
+  // opposite pairing from the left face's corners above) -- margins are
+  // passed in that order so the same visual result comes out mirrored.
+  addWindowInset(
+    vertices,
+    faces,
+    [hullCorner(rings[1], 1), hullCorner(rings[2], 1), hullCorner(rings[2], 2), hullCorner(rings[1], 2)],
+    0.15,
+    0.15,
+    0.4,
+    0.08,
+    glassColor
+  );
 
   return { vertices, faces };
 }

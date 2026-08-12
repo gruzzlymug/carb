@@ -22,6 +22,8 @@ export function createDebugPanel(game: Game, controlsOverlay: ControlsOverlay): 
   telemetryFolder.add(game.telemetry, "targetRpm").name("Drivetrain RPM").listen().disable();
   telemetryFolder.add(game.telemetry, "engineTorque").name("Engine Torque (0-1)").listen().disable();
   telemetryFolder.add(game.telemetry, "gearMultiplier").name("Gear Multiplier").listen().disable();
+  telemetryFolder.add(game.telemetry, "desiredGear").name("Desired Gear").listen().disable();
+  telemetryFolder.add(game.telemetry, "shiftReason").name("Shift Reason").listen().disable();
   telemetryFolder.add(game.telemetry, "longAccel").name("Accel (m/s²)").listen().disable();
   telemetryFolder.add(game.telemetry, "wheelSteerDeg").name("Wheel Steer (°)").listen().disable();
   telemetryFolder.add(game.telemetry, "yawRateDeg").name("Yaw Rate (°/s)").listen().disable();
@@ -45,7 +47,7 @@ export function createDebugPanel(game: Game, controlsOverlay: ControlsOverlay): 
   controlsFolder
     .add(transmissionSettings, "mode", { Automatic: "automatic", Manual: "manual" })
     .name("Transmission");
-  const displayState = { showOverlay: false, engineSound: true, aiDriver: false };
+  const displayState = { showOverlay: false, engineSound: true, aiDriver: false, racingLine: false };
   controlsFolder
     .add(displayState, "showOverlay")
     .name("Show Controls")
@@ -58,6 +60,10 @@ export function createDebugPanel(game: Game, controlsOverlay: ControlsOverlay): 
     .add(displayState, "aiDriver")
     .name("AI Driver")
     .onChange((enabled: boolean) => game.setAiDriverEnabled(enabled));
+  controlsFolder
+    .add(displayState, "racingLine")
+    .name("Show Racing Line")
+    .onChange((visible: boolean) => game.setRacingLineVisible(visible));
   controlsFolder.open();
 
   const trackFolder = gui.addFolder("Track");

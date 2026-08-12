@@ -18,6 +18,8 @@ export class OrthographicCameraController implements CameraController {
   }
 
   update(playerPosition: Vec3): void {
+    // Fixed isometric yaw (cameraSettings.yawRad) rather than the car's own
+    // heading — see ThirdPersonCameraController for a heading-following chase cam.
     // Reapplied every frame so a debug-panel edit to orthographicViewHeight
     // takes effect immediately without separate change-event wiring.
     this.applyFrustum();

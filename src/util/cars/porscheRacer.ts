@@ -62,7 +62,8 @@ export const PORSCHE_RACER: CarConfig = {
   automaticMaxDownshiftRpm: 7600,
 
   manualShiftCooldownMs: 90,
-  automaticShiftCooldownMs: 120,
+  automaticShiftCooldownMs: 200, // was 120 -- a bit more shift commitment now that downshifts are also torque-gated (see automaticGearFor); tune by feel
+  automaticThrottleLiftDebounceMs: 75, // within the 50-100ms range that treats a single-frame throttle blip as noise, not a real lift -- see CarConfig's doc comment
   downshiftSettleMs: 140, // was 120 -- within the 120-160ms sweet range for the over-redline "scream" before settling
   shiftRpmBlendMs: 90,
   shiftTorqueCutMs: 55,
@@ -78,6 +79,18 @@ export const PORSCHE_RACER: CarConfig = {
     tireGrip: 16,
     steeringGrip: 14.5,
     steeringSaturationKnee: 0.7,
+    curvatureHeadroom: 1.2,
+    // ~0 up to highway speed, then ramps up -- 60mph/80mph/100mph testing
+    // showed the car using nearly all of tireGrip=16 well before then, so
+    // the bonus is deliberately back-loaded rather than a flat top-end add.
+    gripBonusCurve: [
+      [0, 0],
+      [13.4, 0], // 30mph
+      [26.8, 1.0], // 60mph -- small
+      [35.8, 2.5], // 80mph -- moderate
+      [44.7, 4.0], // 100mph -- substantial (16 -> 20 m/s^2, ~2g)
+      [53.6, 6.0], // 120mph
+    ],
     handbrakeMaxYawRate: 3.5,
     slipRecoveryPerSec: 18,
     slipHoldPerSec: 3,
@@ -91,8 +104,6 @@ export const PORSCHE_RACER: CarConfig = {
       [45, 0.7],
       [60, 0.6],
     ],
-    lowSpeedAssistMaxSpeed: 8,
-    lowSpeedAssistMaxYawRate: 0.8,
     reverseMaxYawRate: 1.8,
   },
 

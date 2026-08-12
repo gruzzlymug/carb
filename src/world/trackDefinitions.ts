@@ -206,10 +206,85 @@ export function createFigureEightTrack(): TrackDefinition {
   };
 }
 
+/**
+ * Lays a sine-wave lateral wiggle between two points on an otherwise
+ * straight edge, for a serpentine "chicane weave" section — inspired by
+ * the tight, technical S-curves on real go-kart tracks, unlike this
+ * project's other tracks which use one flowing corner at a time.
+ *
+ * The wiggle's envelope (sin(pi*t)) tapers it to exactly 0 at both t=0 and
+ * t=1 — not just the position but the DERIVATIVE too (since
+ * d/dt[envelope*sin(2*pi*cycles*t)] at t=0/1 has both terms vanish: the
+ * envelope itself at the endpoints, and sin(2*pi*cycles*t) at those same
+ * points). That's what makes this safe to splice between two corners built
+ * the normal (box-inscribed-circle) way: it reconnects at exactly the
+ * given start/end points along exactly the edge's own straight-line
+ * tangent, with no kink and no separate closure math required, unlike a
+ * hand-built turn-by-turn path (which needs the turn angles and straight
+ * lengths solved together to close the loop at all).
+ */
+function serpentineEdge(start: Vec3, end: Vec3, amplitude: number, cycles: number, samples: number): Vec3[] {
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  const length = Math.hypot(dx, dy);
+  const tangent = { x: dx / length, y: dy / length };
+  const perp = { x: -tangent.y, y: tangent.x };
+  const points: Vec3[] = [];
+  for (let i = 0; i <= samples; i++) {
+    const t = i / samples;
+    const envelope = Math.sin(Math.PI * t);
+    const wiggle = amplitude * envelope * Math.sin(2 * Math.PI * cycles * t);
+    points.push({ x: start.x + dx * t + perp.x * wiggle, y: start.y + dy * t + perp.y * wiggle, z: 0 });
+  }
+  return points;
+}
+
+/**
+ * A technical, go-kart-style circuit: the same box-inscribed-corner
+ * construction as createRoundedRectangleTrack (four corners of different
+ * radii, each touching the box edge so every straight-to-arc transition
+ * stays tangent), but the top edge is a serpentine weave (see
+ * serpentineEdge) instead of a plain straight — a real chicane section to
+ * stress-test the racing line/AI against tight, technical S-curves rather
+ * than only flowing single-radius corners.
+ */
+export function createSerpentineTrack(): TrackDefinition {
+  const xMin = -150;
+  const xMax = 150;
+  const yMin = -95;
+  const yMax = 95;
+
+  const rBottomRight = 35; // tight
+  const rTopRight = 75; // sweeper
+  const rTopLeft = 40; // tight
+  const rBottomLeft = 55; // medium
+
+  const bottomRight = { x: xMax - rBottomRight, y: yMin + rBottomRight };
+  const topRight = { x: xMax - rTopRight, y: yMax - rTopRight };
+  const topLeft = { x: xMin + rTopLeft, y: yMax - rTopLeft };
+  const bottomLeft = { x: xMin + rBottomLeft, y: yMin + rBottomLeft };
+
+  const topEdgeStart = pointOnCircle(topRight.x, topRight.y, rTopRight, 90);
+  const topEdgeEnd = pointOnCircle(topLeft.x, topLeft.y, rTopLeft, 90);
+
+  const points: Vec3[] = [
+    ...arcPoints(bottomRight.x, bottomRight.y, rBottomRight, 270, 360, CORNER_SAMPLES), // bottom-right corner
+    pointOnCircle(topRight.x, topRight.y, rTopRight, 0), // right edge (straight)
+    ...arcPoints(topRight.x, topRight.y, rTopRight, 0, 90, CORNER_SAMPLES + 4), // top-right sweeper
+    ...serpentineEdge(topEdgeStart, topEdgeEnd, 20, 2.5, 60).slice(1, -1), // top edge: serpentine weave
+    ...arcPoints(topLeft.x, topLeft.y, rTopLeft, 90, 180, CORNER_SAMPLES), // top-left corner
+    pointOnCircle(bottomLeft.x, bottomLeft.y, rBottomLeft, 180), // left edge (straight)
+    ...arcPoints(bottomLeft.x, bottomLeft.y, rBottomLeft, 180, 270, CORNER_SAMPLES).slice(0, -1), // bottom-left corner
+  ];
+
+  return { name: "Serpentine", loops: [{ points, closed: true }] };
+}
+
 export const TRACK_GENERATORS: Record<string, () => TrackDefinition> = {
   roundedRectangle: createRoundedRectangleTrack,
   oval: createOvalTrack,
   figureEight: createFigureEightTrack,
+  serpentine: createSerpentineTrack,
 };
 
 export const DEFAULT_TRACK_TYPE = "roundedRectangle";
