@@ -9,12 +9,13 @@ import { buildTrackQuery } from "../world/trackQuery.js";
 // without just re-deriving the generator, so keep these in sync by hand.
 const OVAL_RADIUS = 60;
 const OVAL_HALF_STRAIGHT = 110;
-// Loop A (fast sweeper) is still a circle; loop B (technical loop) is a small
+// Lobe A (fast sweeper) is still a circle; lobe B (technical lobe) is a small
 // rounded rectangle with independent corner radii, not a circle — these two
-// query points just need to land unambiguously inside each loop's own
-// footprint, not on any particular named feature.
-const FIGURE_EIGHT_LOOP_A_CENTER = { x: -80, y: 0 };
-const FIGURE_EIGHT_LOOP_B_INTERIOR = { x: 75, y: 0 };
+// query points just need to land unambiguously inside each lobe's own
+// footprint, not on any particular named feature. Both lobes are part of the
+// same single loop (see createFigureEightTrack's doc comment).
+const FIGURE_EIGHT_LOBE_A_CENTER = { x: -80, y: 0 };
+const FIGURE_EIGHT_LOBE_B_INTERIOR = { x: 75, y: 0 };
 
 describe("TrackQuery — oval track", () => {
   const query = buildTrackQuery(sampleTrack(createOvalTrack()));
@@ -43,13 +44,13 @@ describe("TrackQuery — oval track", () => {
   });
 });
 
-describe("TrackQuery — figure-eight (two independent loops)", () => {
+describe("TrackQuery — figure-eight (single self-pinching loop)", () => {
   const query = buildTrackQuery(sampleTrack(createFigureEightTrack()));
 
-  it("resolves loopIndex independently for each loop", () => {
-    const leftLoop = query.nearestPoint({ ...FIGURE_EIGHT_LOOP_A_CENTER, z: 0 });
-    const rightLoop = query.nearestPoint({ ...FIGURE_EIGHT_LOOP_B_INTERIOR, z: 0 });
-    assert.equal(leftLoop.loopIndex, 0);
-    assert.equal(rightLoop.loopIndex, 1);
+  it("resolves both lobes to the same loop, since the figure-eight is one spline", () => {
+    const lobeA = query.nearestPoint({ ...FIGURE_EIGHT_LOBE_A_CENTER, z: 0 });
+    const lobeB = query.nearestPoint({ ...FIGURE_EIGHT_LOBE_B_INTERIOR, z: 0 });
+    assert.equal(lobeA.loopIndex, 0);
+    assert.equal(lobeB.loopIndex, 0);
   });
 });

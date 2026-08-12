@@ -18,6 +18,20 @@ interface QueryLoop {
   closed: boolean;
 }
 
+/**
+ * Where along the track a caller has reason to believe it already is —
+ * pass this into nearestPoint() to restrict the search to that vicinity
+ * instead of scanning the whole track. Low-level plumbing: most callers
+ * that track something moving continuously (the player car, an AI's
+ * racing-line progress, lap arc length) should go through TrackFollower
+ * (world/trackFollower.ts) rather than building/threading this by hand —
+ * it owns the "is this hint still trustworthy" policy in one place.
+ */
+export interface TrackLocationHint {
+  loopIndex: number;
+  arcLength: number;
+}
+
 /** The track's geometry at the point on the centerline nearest to a query position. */
 export interface TrackSurfaceSample {
   /** Nearest centerline point. */
@@ -47,8 +61,22 @@ export interface TrackPointSample {
 }
 
 export interface TrackQuery {
-  /** Finds the nearest point on any loop's centerline to a world-space position (z ignored). */
-  nearestPoint(position: Vec3): TrackSurfaceSample;
+  /**
+   * Finds the nearest point on the track's centerline to a world-space
+   * position (z ignored).
+   *  - No hint: scans every loop's every sample. Correct but
+   *    direction-blind — if the track passes close to a different,
+   *    arc-length-distant part of itself, this can snap to the wrong one.
+   *    Fine for one-shot lookups (placement, tests); wrong for anything
+   *    tracking continuous motion.
+   *  - With `hint`: scans ONLY hint.loopIndex, restricted to samples
+   *    within the fixed arc-length window around hint.arcLength — no
+   *    fallback, no "is this still plausible" check. A deliberately dumb,
+   *    predictable primitive: TrackFollower (world/trackFollower.ts) is
+   *    where the policy for "is my hint still good, or do I need a fresh
+   *    fix" lives; call through that instead of hand-rolling a hint here.
+   */
+  nearestPoint(position: Vec3, hint?: TrackLocationHint): TrackSurfaceSample;
   /** Total arc length (meters) of the given loop — the distance at which its arcLength wraps back to 0. */
   loopLength(loopIndex: number): number;
   /**
@@ -83,13 +111,28 @@ function withCurvature(loop: SampledLoop): QueryLoop {
  * hundreds per track) — simple and fast enough at one query per physics step; revisit
  * with a spatial index only if profiling shows otherwise.
  */
+// Comfortably bigger than a physics-step's worth of movement or the
+// steering controllers' own lookahead (MAX_LOOKAHEAD_M = 40 in
+// steeringController.ts), but far smaller than the arc-length gap between
+// a track's own separate close passes (e.g. ~490m at the figure-eight's
+// pinch) — wide enough to always contain "the same place I was a moment
+// ago", narrow enough to never reach the OTHER place that happens to sit
+// nearby in space.
+const HINT_WINDOW_METERS = 60;
+
+type BestMatch = { loopIndex: number; sample: QuerySample; distSq: number };
+
+function arcLengthDistance(a: number, b: number, totalLength: number, closed: boolean): number {
+  const d = Math.abs(a - b);
+  return closed ? Math.min(d, totalLength - d) : d;
+}
+
 export function buildTrackQuery(track: SampledTrack): TrackQuery {
   const loops = track.loops.map(withCurvature);
   const halfWidth = ROAD_WIDTH / 2;
 
-  function nearestPoint(position: Vec3): TrackSurfaceSample {
-    let best: { loopIndex: number; sample: QuerySample; distSq: number } | null = null;
-
+  function scanAllLoops(position: Vec3): BestMatch | null {
+    let best: BestMatch | null = null;
     for (let loopIndex = 0; loopIndex < loops.length; loopIndex++) {
       for (const sample of loops[loopIndex].samples) {
         const dx = position.x - sample.center.x;
@@ -100,6 +143,31 @@ export function buildTrackQuery(track: SampledTrack): TrackQuery {
         }
       }
     }
+    return best;
+  }
+
+  /** Nearest sample on hint.loopIndex, restricted to an arc-length window around hint.arcLength. */
+  function scanNearHint(position: Vec3, hint: TrackLocationHint): BestMatch | null {
+    const loop = loops[hint.loopIndex];
+    if (!loop) return null;
+
+    let best: BestMatch | null = null;
+    for (const sample of loop.samples) {
+      if (arcLengthDistance(sample.arcLength, hint.arcLength, loop.totalLength, loop.closed) > HINT_WINDOW_METERS) {
+        continue;
+      }
+      const dx = position.x - sample.center.x;
+      const dy = position.y - sample.center.y;
+      const distSq = dx * dx + dy * dy;
+      if (best === null || distSq < best.distSq) {
+        best = { loopIndex: hint.loopIndex, sample, distSq };
+      }
+    }
+    return best;
+  }
+
+  function nearestPoint(position: Vec3, hint?: TrackLocationHint): TrackSurfaceSample {
+    const best = hint ? scanNearHint(position, hint) : scanAllLoops(position);
 
     if (best === null) {
       throw new Error("TrackQuery.nearestPoint: track has no samples");

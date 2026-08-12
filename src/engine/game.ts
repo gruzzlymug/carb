@@ -10,7 +10,8 @@ import { CAMERA_TYPES, DEFAULT_CAMERA_TYPE, type CameraController } from "./came
 import { Player } from "../entities/player.js";
 import { PlayerView } from "../entities/playerView.js";
 import { buildTrackWorld, type TrackWorld } from "../world/trackWorld.js";
-import type { TrackQuery } from "../world/trackQuery.js";
+import type { TrackQuery, TrackSurfaceSample } from "../world/trackQuery.js";
+import { TrackFollower } from "../world/trackFollower.js";
 import type { SampledLoop } from "../world/trackSpline.js";
 import type { RacingLine } from "../world/racingLine.js";
 import type { SpeedProfile } from "../world/speedProfile.js";
@@ -119,6 +120,10 @@ export class Game {
   private lapTracker!: LapTracker;
   /** Current track's loops, re-handed to a camera's setTrackBounds whenever the camera type changes (e.g. switching to topDown after a track is already loaded). */
   private trackLoops: readonly SampledLoop[] = [];
+  /** Tracks the player's own continuous position along the spline (see world/trackFollower.ts) — the one canonical resolution per physics step, read by AiDriver, surface classification, and telemetry alike. Always assigned in the constructor via setTrackType before the loop starts. */
+  private playerFollower!: TrackFollower;
+  /** This physics step's resolved player location — cached so presentFrame's telemetry read doesn't need its own follower call. */
+  private playerLocation!: TrackSurfaceSample;
 
   constructor(canvas: HTMLCanvasElement) {
     this.renderer = new Renderer(canvas);
@@ -176,10 +181,12 @@ export class Game {
     this.racingLine = world.racingLine;
     this.speedProfile = world.speedProfile;
     this.lapTracker = new LapTracker(this.trackQuery);
+    this.playerFollower = new TrackFollower(this.trackQuery);
     this.trackLoops = world.loops;
     this.minimap.setTrack(world.loops);
     this.cameraController.setTrackBounds?.(world.loops);
     this.player.respawn(this.spawn.position, this.spawn.headingRad);
+    this.playerLocation = this.playerFollower.attach(this.player.position);
   }
 
   private readonly handleResize = (): void => {
@@ -220,14 +227,19 @@ export class Game {
 
   /** One fixed physics step. Edge-triggered input is consumed here (endFrame) so a press maps to exactly one step even when a render frame runs several. */
   private stepPhysics(dt: number): void {
-    if (this.input.wasPressed("r")) {
+    const respawned = this.input.wasPressed("r");
+    if (respawned) {
       this.player.respawn(this.spawn.position, this.spawn.headingRad);
       this.lapTracker.reset();
     }
+    this.playerLocation = respawned
+      ? this.playerFollower.attach(this.player.position)
+      : this.playerFollower.locate(this.player.position);
+
     const controls = this.aiDriverEnabled
-      ? this.aiDriver.computeControls(this.player, this.trackQuery, this.racingLine, this.speedProfile)
+      ? this.aiDriver.computeControls(this.player, this.playerLocation, this.racingLine, this.speedProfile)
       : readControlState(this.input);
-    const surface = classifySurface(this.trackQuery.nearestPoint(this.player.position).distance);
+    const surface = classifySurface(this.playerLocation.distance);
     this.lastThrottle = controls.throttle;
     this.player.update(dt, controls, surface);
     this.lapTracker.update(dt, this.player.position);
@@ -260,7 +272,9 @@ export class Game {
     this.telemetry.driftAngleDeg = Math.round(this.player.driftAngleDeg * 10) / 10;
     this.telemetry.isDrifting = this.player.isDrifting;
 
-    const surface = this.trackQuery.nearestPoint(this.player.position);
+    // Re-resolved fresh (not the stepPhysics-time value cached in this.playerLocation) since
+    // the player has moved since then — same TrackFollower, so it's still one continuous cursor.
+    const surface = this.playerFollower.locate(this.player.position);
     this.telemetry.lateralOffsetM = Math.round(surface.lateralOffset * 100) / 100;
     this.telemetry.trackCurvature = Math.round(surface.curvature * 1000) / 1000;
     this.telemetry.onRoad = surface.onRoad;

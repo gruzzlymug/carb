@@ -1,5 +1,6 @@
 import type { Vec3 } from "../math/vector3.js";
 import type { TrackQuery } from "../world/trackQuery.js";
+import { TrackFollower } from "../world/trackFollower.js";
 
 /** Number of sectors the lap is split into — SECTOR_COUNT - 1 intermediate checkpoints, plus the finish line. */
 const DEFAULT_SECTOR_COUNT = 3;
@@ -18,12 +19,13 @@ export interface LapState {
 /**
  * Tracks lap completion, timing, and intermediate checkpoint splits by
  * watching arc-length progress along one loop of the track (the one the
- * spawn point sits on), via TrackQuery — no separate geometry or "am I near
- * the line/checkpoint" heuristic of its own.
+ * spawn point sits on), via an internal TrackFollower — no separate
+ * geometry or "am I near the line/checkpoint" heuristic of its own.
  *
- * Only progress on `loopIndex` counts: a figure-eight's second loop is a
- * different physical path, not a lap of this one, so time spent there simply
- * doesn't advance progress (existing lap timer keeps running; no reset, no
+ * Only progress on `loopIndex` counts. Every track today is a single loop
+ * (loopIndex 0), so this is currently always satisfied — it exists for a
+ * future multi-loop track, where time spent off the tracked loop simply
+ * wouldn't advance progress (existing lap timer keeps running; no reset, no
  * heuristic re-routing).
  *
  * Only forward crossings of the start/finish line complete a lap. Detected as
@@ -48,10 +50,11 @@ export class LapTracker {
   private prevArcLength = 0;
   private readonly loopLength: number;
   private readonly checkpointArcLengths: number[];
+  private readonly follower: TrackFollower;
   private splits: (number | null)[];
 
   constructor(
-    private readonly trackQuery: TrackQuery,
+    trackQuery: TrackQuery,
     private readonly loopIndex = 0,
     sectorCount = DEFAULT_SECTOR_COUNT
   ) {
@@ -60,6 +63,7 @@ export class LapTracker {
       { length: Math.max(0, sectorCount - 1) },
       (_, i) => ((i + 1) / sectorCount) * this.loopLength
     );
+    this.follower = new TrackFollower(trackQuery);
     this.splits = this.checkpointArcLengths.map(() => null);
   }
 
@@ -67,7 +71,7 @@ export class LapTracker {
   update(dt: number, position: Vec3): void {
     this.currentLapTime += dt;
 
-    const sample = this.trackQuery.nearestPoint(position);
+    const sample = this.follower.locate(position);
     if (sample.loopIndex !== this.loopIndex) return;
 
     // Checkpoints first, so a threshold sitting right at the finish line still

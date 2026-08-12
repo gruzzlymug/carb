@@ -1,7 +1,7 @@
 import { angleDelta, perpendicular } from "../math/vector3.js";
 import type { Vec3 } from "../math/vector3.js";
 import type { ControlState } from "../engine/controlState.js";
-import type { TrackQuery, TrackSurfaceSample } from "../world/trackQuery.js";
+import type { TrackSurfaceSample } from "../world/trackQuery.js";
 import type { Player } from "../entities/player.js";
 import type { RacingLine } from "../world/racingLine.js";
 import { racingLineIndexAt } from "../world/racingLine.js";
@@ -104,18 +104,22 @@ export function racingLineErrorAt(
  * modes.
  *
  * RacingLine/SpeedProfile only cover loopIndex 0 (see racingLine.ts's
- * scope note); if the car is ever found on a different loop (e.g. the
- * figure-eight's second loop), falls back to a minimal "aim along the
- * current tangent, corner-speed-limit from curvature alone" heuristic,
- * always bang-bang — not addressed by the racing-line work, same
- * limitation noted there.
+ * scope note); every track today is a single loop, so this always holds in
+ * practice. If the car is ever found on a different loop (a future
+ * multi-loop track), falls back to a minimal "aim along the current
+ * tangent, corner-speed-limit from curvature alone" heuristic, always
+ * bang-bang — not addressed by the racing-line work, same limitation noted
+ * there.
+ *
+ * Takes `here` — the car's already-resolved track location — rather than a
+ * TrackQuery to resolve it itself: the caller owns a TrackFollower (see
+ * world/trackFollower.ts) tracking the car continuously, and this is the
+ * one canonical resolution per step, not a second independent guess.
  */
 export class AiDriver {
   constructor(private readonly steeringController?: SteeringController) {}
 
-  computeControls(player: Player, trackQuery: TrackQuery, racingLine: RacingLine, speedProfile: SpeedProfile): ControlState {
-    const here = trackQuery.nearestPoint(player.position);
-
+  computeControls(player: Player, here: TrackSurfaceSample, racingLine: RacingLine, speedProfile: SpeedProfile): ControlState {
     if (here.loopIndex !== racingLine.loopIndex) {
       return this.fallbackControls(player, here);
     }

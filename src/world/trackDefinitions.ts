@@ -9,12 +9,11 @@ export interface TrackLoop {
 /**
  * A track's sparse authoring control points — exactly the shape an
  * external track-builder tool would export (one or more polylines,
- * each optionally looping). Most tracks are a single loop; a
- * figure-eight is two independent loops that happen to touch at a
- * point — modeling it as two loops (rather than one path that reverses
- * direction at the crossing) avoids a spline tangent instability right
- * at that seam. world/trackSpline.ts turns each loop into a smooth,
- * densely-sampled curve.
+ * each optionally looping). Every track is a single loop.
+ * world/trackSpline.ts turns each loop into a smooth, densely-sampled
+ * curve. (TrackDefinition still models `loops` as an array for forward
+ * compatibility with a future multi-loop track, but nothing produces
+ * more than one today.)
  */
 export interface TrackDefinition {
   name: string;
@@ -148,30 +147,37 @@ export function createOvalTrack(): TrackDefinition {
 }
 
 /**
- * Two loops crossing at a single point — a complementary,
- * self-intersecting shape. Each circle is its own independent closed
- * loop rather than one path that reverses direction at the crossing;
- * see the TrackDefinition doc comment for why that distinction matters.
+ * A figure-eight, authored as ONE continuous closed loop that pinches
+ * through itself at a single shared point rather than as two separate
+ * loops. Two lobes with different personalities: lobe A is a single
+ * large circle (fast, flowing, minimal technical demand — the same role
+ * the oval plays as its own track). Lobe B is a smaller rounded
+ * rectangle with four DIFFERENT corner radii (same per-corner-radius
+ * construction as createRoundedRectangleTrack, just without a compound
+ * corner) — more corners, tighter radii, a genuinely different,
+ * more technical lobe.
  *
- * The two loops have different personalities: loop A is a single large
- * circle (fast, flowing, minimal technical demand — the same role the
- * oval plays as its own track). Loop B is a smaller rounded rectangle
- * with four DIFFERENT corner radii (same per-corner-radius construction
- * as createRoundedRectangleTrack, just without a compound corner) —
- * more corners, tighter radii, a genuinely different, more technical
- * loop to choose instead of loop A.
+ * Both lobes are authored so they pass through the shared origin with a
+ * matching (vertical) tangent, and lobe B's own point order is reversed
+ * before splicing so its direction of travel through the origin agrees
+ * with lobe A's, rather than opposing it: gluing them together nose-to-
+ * tail like that keeps the joined path's direction continuous at the
+ * pinch (a real crossing, direction reversing there, produces a near-
+ * cusp under Catmull-Rom — checked empirically at min radius ~2.6,
+ * vs. ~37 for this nose-to-tail splice, which is in line with the
+ * tightest corners on the other tracks).
  */
 export function createFigureEightTrack(): TrackDefinition {
-  const radiusA = 80; // fast sweeper loop
+  const radiusA = 80; // fast sweeper lobe
   const samplesPerLoop = 20;
 
-  // Loop A starts and ends at the shared origin (0, 0) — that's the
-  // crossing point where the two road ribbons will overlap.
+  // Lobe A starts and ends at the shared origin (0, 0) — that's the
+  // pinch point where the two lobes touch.
   const loopA = arcPoints(-radiusA, 0, radiusA, 0, 360, samplesPerLoop).slice(0, -1);
 
-  // Loop B: a small rounded rectangle, xMin pinned to 0 so its left
-  // straight runs right through the shared origin (same crossing point
-  // loop A passes through, at a matching vertical tangent there).
+  // Lobe B: a small rounded rectangle, xMin pinned to 0 so its left
+  // straight runs right through the shared origin (same pinch point
+  // lobe A passes through, at a matching vertical tangent there).
   const bXMin = 0;
   const bXMax = 150;
   const bYMin = -70;
@@ -186,23 +192,26 @@ export function createFigureEightTrack(): TrackDefinition {
   const bBL = { x: bXMin + rBL, y: bYMin + rBL };
   const bBR = { x: bXMax - rBR, y: bYMin + rBR };
 
-  const loopB: Vec3[] = [
+  const loopBPoints: Vec3[] = [
     pointOnCircle(bBR.x, bBR.y, rBR, 0), // bottom of right straight
     ...arcPoints(bTR.x, bTR.y, rTR, 0, 90, 8),
     midpoint(pointOnCircle(bTR.x, bTR.y, rTR, 90), pointOnCircle(bTL.x, bTL.y, rTL, 90)), // top straight
     ...arcPoints(bTL.x, bTL.y, rTL, 90, 180, 8),
-    { x: 0, y: 0, z: 0 }, // left straight, through the origin (the figure-eight crossing point)
+    { x: 0, y: 0, z: 0 }, // left straight, through the origin (the pinch point)
     ...arcPoints(bBL.x, bBL.y, rBL, 180, 270, 8),
     midpoint(pointOnCircle(bBL.x, bBL.y, rBL, 270), pointOnCircle(bBR.x, bBR.y, rBR, 270)), // bottom straight
     ...arcPoints(bBR.x, bBR.y, rBR, 270, 360, 8).slice(0, -1),
   ];
 
+  // Reverse lobe B's direction of travel, then rotate so it starts at
+  // the shared origin — see doc comment above for why.
+  const reversed = loopBPoints.slice().reverse();
+  const originIndex = reversed.findIndex((p) => p.x === 0 && p.y === 0);
+  const loopB = [...reversed.slice(originIndex), ...reversed.slice(0, originIndex)];
+
   return {
     name: "Figure Eight",
-    loops: [
-      { points: loopA, closed: true },
-      { points: loopB, closed: true },
-    ],
+    loops: [{ points: [...loopA, ...loopB], closed: true }],
   };
 }
 

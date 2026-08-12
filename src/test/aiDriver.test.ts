@@ -9,6 +9,7 @@ import { AiDriver, racingLineErrorAt } from "../gameplay/aiDriver.js";
 import { ProportionalSteeringController, PurePursuitSteeringController } from "../gameplay/steeringController.js";
 import type { SteeringController } from "../gameplay/steeringController.js";
 import { LapTracker } from "../gameplay/lapTracker.js";
+import { TrackFollower } from "../world/trackFollower.js";
 import { PHYSICS_DT } from "./helpers.js";
 
 // AiDriver never shifts gears itself — it assumes automatic mode (see its own
@@ -36,6 +37,7 @@ function percentile(sorted: number[], p: number): number {
  */
 function driveWithAi(ai: AiDriver, player: Player, world: TrackWorld, maxSteps: number) {
   const lapTracker = new LapTracker(world.query);
+  const follower = new TrackFollower(world.query);
   let offRoadSteps = 0;
   let stalledSteps = 0;
   let minSpeed = Infinity;
@@ -43,8 +45,8 @@ function driveWithAi(ai: AiDriver, player: Player, world: TrackWorld, maxSteps: 
   const lateralErrors: number[] = [];
 
   for (let i = 0; i < maxSteps; i++) {
-    const controls = ai.computeControls(player, world.query, world.racingLine, world.speedProfile);
-    const surfaceSample = world.query.nearestPoint(player.position);
+    const surfaceSample = follower.locate(player.position);
+    const controls = ai.computeControls(player, surfaceSample, world.racingLine, world.speedProfile);
     const surface = classifySurface(surfaceSample.distance);
     player.update(PHYSICS_DT, controls, surface);
     lapTracker.update(PHYSICS_DT, player.position);
