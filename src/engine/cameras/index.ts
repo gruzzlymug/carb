@@ -19,4 +19,4 @@ export const CAMERA_TYPES: Record<string, () => CameraController> = {
   thirdPerson: () => new ThirdPersonCameraController(),
 };
 
-export const DEFAULT_CAMERA_TYPE = "orthographic";
+export const DEFAULT_CAMERA_TYPE = "topDown";
